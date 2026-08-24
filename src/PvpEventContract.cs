@@ -150,7 +150,8 @@ namespace ErenshorPvP
             if (value == "player_fled") return ClassPlayerFled;
             if (value == "retreat") return ClassEnemyRetreated;
             if (value == "scene_transition" || value == "manual" || value == "shutdown" ||
-                value == "timer" || value == "cleanup") return ClassCancelled;
+                value == "timer" || value == "cleanup" || value == "pvp_disabled" ||
+                value == "game_not_ready" || value == "coop_session_active") return ClassCancelled;
             return ClassInvalid;
         }
 
@@ -210,6 +211,7 @@ namespace ErenshorPvP
             if (ClassifyOutcome("player_fled") != ClassPlayerFled) return "FAIL classify flee";
             if (ClassifyOutcome("retreat") != ClassEnemyRetreated) return "FAIL classify retreat";
             if (ClassifyOutcome("scene_transition") != ClassCancelled) return "FAIL classify cancelled";
+            if (ClassifyOutcome("coop_session_active") != ClassCancelled) return "FAIL classify coop cancellation";
             if (ClassifyOutcome("third_party_aggro") != ClassInvalid) return "FAIL classify interference";
             if (ClassifyOutcome("fight_state_failed") != ClassInvalid) return "FAIL classify internal failure";
             if (ClassifyOutcome("team_spawn_failed") != ClassInvalid) return "FAIL classify spawn failure";

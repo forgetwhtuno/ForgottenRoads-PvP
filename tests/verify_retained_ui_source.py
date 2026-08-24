@@ -6,9 +6,12 @@ SRC = ROOT / "src"
 def read(name):
     return (SRC / name).read_text(encoding="utf-8")
 
+checks = 0
 def require(cond, msg):
+    global checks
     if not cond:
         raise AssertionError(msg)
+    checks += 1
 
 panel = read("PvpPanel.cs")
 plugin = read("ErenshorPvPPlugin.cs")
@@ -33,4 +36,4 @@ require("return PvpController.HubStatus();" in control, "ControlApi does not use
 require("RequestOpenPanel" in controller and "RequestClosePanel" in controller, "retained UI open/close control contract missing")
 require("Unity.TextMeshPro" in project and "UnityEngine.IMGUIModule" not in project, "project references do not match retained UI stack")
 require("BepInEx.dll" not in project and 'Reference Include="BepInEx' not in project, "BepInEx project reference remains")
-print("verify_retained_ui_source: PASS")
+print(f"verify_retained_ui_source: PASS ({checks} checks)")

@@ -31,6 +31,12 @@ function Find-Csc { $paths = @("$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319
 
 $GameDir = Find-Game $GameDir
 $LunarisLibDir = Find-LunarisLibDir $LunarisLibDir $GameDir
+
+# Never install a fresh candidate that has not passed the repo's deterministic policy/source suite.
+# Runtime/live acceptance is still a separate release gate.
+& (Join-Path $ScriptRoot "tests\RUN_UI_TESTS.ps1")
+if ($LASTEXITCODE -ne 0) { throw "PvP deterministic/source tests failed; refusing to build/install." }
+
 $csc = Find-Csc; $managed = Join-Path $GameDir "Erenshor_Data\Managed"; $pluginDir = Join-Path $GameDir "plugins"
 New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
 $refs = @((Join-Path $LunarisLibDir "Lunaris.dll"),(Join-Path $LunarisLibDir "0Harmony.dll"),(Join-Path $managed "Assembly-CSharp.dll"),(Join-Path $managed "netstandard.dll"),(Join-Path $managed "UnityEngine.dll"),(Join-Path $managed "UnityEngine.CoreModule.dll"),

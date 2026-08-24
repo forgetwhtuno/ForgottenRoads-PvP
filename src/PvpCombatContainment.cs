@@ -27,6 +27,12 @@ namespace ErenshorPvP
         private static long _healingToAttackers;
         private static long _healingToDefenders;
         private static bool _damageContextPet;
+        // Instance id of the temporary attacker currently dealing damage, 0 = none/unattributed.
+        // Threaded across the DamageMe/MagicDamageMe/BleedDamageMe -> Stats.ReduceHP call boundary
+        // the exact same way _damageContextPet already is (save/restore around the nested call), so
+        // per-proxy "effective damage dealt" can be attributed at the point the real HP delta is
+        // known (0.5.11 observability; see PvpTemporaryCloneFactory.RecordDamageDealt).
+        private static int _damageSourceProxyId;
         private static int _healTelemetryDepth;
         private static bool _loggedDamageToDefender;
         private static bool _loggedHealToAttacker;
@@ -39,6 +45,7 @@ namespace ErenshorPvP
         {
             internal bool ContextSet;
             internal bool PreviousPetContext;
+            internal int PreviousDamageSourceProxyId;
         }
 
         internal struct HpTelemetryState
@@ -46,7 +53,24 @@ namespace ErenshorPvP
             internal bool Track;
             internal bool TargetIsEnemy;
             internal int StartingHp;
+            internal int StartingMaxHp;
+            internal int RequestedHeal;
             internal bool OwnsHealScope;
+            // Instance id of the temporary attacker that cast this heal, 0 = unattributed (e.g. the
+            // flat HealMe(int) overload, which carries no source Character at all).
+            internal int SourceProxyId;
+        }
+
+        internal sealed class StatusEffectTelemetryState
+        {
+            internal Stats Target;
+            internal Spell Spell;
+            internal Character Source;
+            internal int BeforeMatching;
+            internal float BeforeMaxDuration;
+            internal StatusEffect[] BeforeSlots;
+            internal bool Track;
+            internal bool Completed;
         }
 
         internal static bool TargetTestActive { get { return _cloneNpc != null && Time.unscaledTime < _targetTestEnds; } }
@@ -177,10 +201,21 @@ namespace ErenshorPvP
             NavMeshAgent nav = _cloneNav;
             _cloneNpc = null; _cloneActor = null; _player = null; _cloneNav = null; _targetTestEnds = 0f; _lethalFight = false; _retreatRolled = false;
             foreach (NPC enemy in EnemyNpcs) { try { if (enemy != null) enemy.ForceAggroOn(null); } catch { } }
-            foreach (Character pet in DefenderPets) { try { if (pet != null && pet.MyNPC != null) pet.MyNPC.ForceAggroOn(null); } catch { } }
+            // Defender pets are native world actors, not PvP-owned proxies. Release only a stale
+            // PvP-attacker target; do not erase a legitimate world-mob target acquired during the match.
+            foreach (Character pet in DefenderPets)
+            {
+                try
+                {
+                    if (pet == null || pet.MyNPC == null) continue;
+                    Character current = pet.MyNPC.CurrentAggroTarget;
+                    if (current != null && EnemyActors.Contains(current)) pet.MyNPC.ForceAggroOn(null);
+                }
+                catch { }
+            }
             EnemyNpcs.Clear(); EnemyActors.Clear(); Defenders.Clear(); DefenderPets.Clear();
             _fightStartedAt = 0f; _combatStartupDeadline = 0f; _damageToAttackers = 0; _petDamageToAttackers = 0; _damageToDefenders = 0;
-            _healingToAttackers = 0; _healingToDefenders = 0; _damageContextPet = false; _healTelemetryDepth = 0;
+            _healingToAttackers = 0; _healingToDefenders = 0; _damageContextPet = false; _damageSourceProxyId = 0; _healTelemetryDepth = 0;
             _loggedDamageToDefender = false; _loggedHealToAttacker = false;
             try { if (npc != null) npc.ForceAggroOn(null); } catch { }
             try { if (nav != null) { nav.ResetPath(); nav.enabled = false; } } catch { }
@@ -217,11 +252,63 @@ namespace ErenshorPvP
             return false;
         }
 
+        internal static bool PrepareSpellStart(CastSpell caster, Spell spell, ref Stats targetStats,
+            bool directCastEntry, out bool adaptedToSelf)
+        {
+            adaptedToSelf = false;
+            Character source = null, passedTarget = null;
+            try { source = caster == null ? null : caster.MyChar; } catch { }
+            try { passedTarget = targetStats == null ? null : targetStats.Myself; } catch { }
+
+            PvpSpellSemanticSnapshot semantic = PvpSpellSemantics.Inspect(spell);
+            Character policyTarget = passedTarget;
+
+            if (LethalFightActive && source != null && source == _player && passedTarget != null &&
+                EnemyActors.Contains(passedTarget) && directCastEntry && spell != null)
+            {
+                bool healType = false, group = false, ae = false, pbae = false, pet = false, charm = false, proc = false;
+                int targetHealing = 0, targetDamage = 0;
+                try { healType = spell.Type == Spell.SpellType.Heal; } catch { }
+                try { targetHealing = spell.TargetHealing; } catch { }
+                try { targetDamage = spell.TargetDamage; } catch { }
+                try { group = spell.GroupEffect; } catch { }
+                try { ae = spell.Type == Spell.SpellType.AE; } catch { }
+                try { pbae = spell.Type == Spell.SpellType.PBAE; } catch { }
+                try { pet = spell.PetToSummon != null || spell.Type == Spell.SpellType.Pet; } catch { }
+                try { charm = spell.CharmTarget; } catch { }
+                try { proc = spell.AddProc != null; } catch { }
+                if (PvpSpellTargetPolicy.CanAdaptOpponentHealToSelf(true, true, true, true,
+                    healType, targetHealing, targetDamage, group, ae, pbae, pet, charm, proc))
+                {
+                    Stats selfStats = source.MyStats;
+                    if (selfStats != null && selfStats.Myself == source)
+                    {
+                        targetStats = selfStats;
+                        policyTarget = source;
+                        adaptedToSelf = true;
+                        PvpDiagnostics.Log("spell_target_adaptation source=defender_player; spell=" +
+                            (spell == null ? "unknown" : spell.SpellName) + "; original_target=" +
+                            DescribeCombatTarget(passedTarget) + "; resolved_target=defender:self; current_target_preserved=true; mode=single_target_heal_to_self");
+                    }
+                }
+            }
+
+            // SelfOnly / ApplyToCaster / InflictOnSelf are properties of the Spell asset, not proof
+            // that the caller-supplied Stats is the eventual affected actor. Preserve the native target
+            // argument, but authorize the cast using the caster as its effective self edge.
+            if (!adaptedToSelf && semantic.DeclaresSelf && source != null) policyTarget = source;
+            return AllowSpellStartResolved(caster, spell, source, policyTarget, semantic);
+        }
+
         internal static bool AllowSpellStart(CastSpell caster, Spell spell, Stats targetStats)
         {
-            Character source = null, target = null;
-            try { source = caster == null ? null : caster.MyChar; } catch { }
-            try { target = targetStats == null ? null : targetStats.Myself; } catch { }
+            bool ignored;
+            return PrepareSpellStart(caster, spell, ref targetStats, false, out ignored);
+        }
+
+        private static bool AllowSpellStartResolved(CastSpell caster, Spell spell, Character source,
+            Character target, PvpSpellSemanticSnapshot semantic)
+        {
             if (!LethalFightActive)
             {
                 // Before GO, block every spell initiation that crosses the temporary-proxy boundary.
@@ -234,30 +321,19 @@ namespace ErenshorPvP
             bool sourceDefender = Defenders.Contains(source) || DefenderPets.Contains(source) || RegisterDefenderPet(source);
             bool targetAttacker = EnemyActors.Contains(target);
             bool targetDefender = Defenders.Contains(target) || DefenderPets.Contains(target) || RegisterDefenderPet(target);
-            bool beneficial = IsBeneficialSpell(spell);
+            bool beneficial = semantic != null && semantic.Beneficial;
             bool sourceProtected = IsProtectedWorldActor(source);
             bool targetProtected = IsProtectedWorldActor(target);
             PvpInteractionDecision decision = PvpWorldCombatPolicy.DecideSpellStart(sourceDefender, sourceAttacker,
                 targetDefender, targetAttacker, target == null, beneficial, sourceProtected, targetProtected);
             if (decision != PvpInteractionDecision.Block) return true;
 
-            // Targeted protected interactions are rejected individually. AE/PBAE starts are never
-            // proximity-blocked here; actual affected targets are filtered only if proven protected.
+            // Targeted protected/cross-team beneficial interactions are rejected individually. AE/PBAE
+            // starts are never proximity-blocked here; actual affected targets are filtered per edge.
             PvpDiagnostics.Log("protected_or_team_spell_rejected source=" + DescribeCombatTarget(source) +
-                "; target=" + DescribeCombatTarget(target) + "; beneficial=" + beneficial);
+                "; target=" + DescribeCombatTarget(target) + "; category=" +
+                (semantic == null ? "unknown" : semantic.Token) + "; beneficial=" + beneficial);
             return false;
-        }
-
-        private static bool IsBeneficialSpell(Spell spell)
-        {
-            if (spell == null) return false;
-            try
-            {
-                return spell.Type == Spell.SpellType.Heal || spell.Type == Spell.SpellType.Beneficial ||
-                    spell.TargetHealing > 0 || spell.CasterHealing > 0 || spell.SelfOnly || spell.ApplyToCaster ||
-                    spell.PercentManaRestoration > 0;
-            }
-            catch { return false; }
         }
 
         internal static bool PrepareDamage(Character target, Character attacker, bool fromPlayer, ref int result, ref DamageTelemetryState state)
@@ -280,7 +356,10 @@ namespace ErenshorPvP
                     {
                         state.ContextSet = true;
                         state.PreviousPetContext = _damageContextPet;
+                        state.PreviousDamageSourceProxyId = _damageSourceProxyId;
                         _damageContextPet = targetAttacker && DefenderPets.Contains(attacker);
+                        _damageSourceProxyId = (sourceAttacker && PvpTemporaryCloneFactory.IsTemporaryActor(attacker)) ?
+                            attacker.gameObject.GetInstanceID() : 0;
                     }
                     return true;
                 }
@@ -297,7 +376,7 @@ namespace ErenshorPvP
 
         internal static void FinishDamage(DamageTelemetryState state)
         {
-            if (state.ContextSet) _damageContextPet = state.PreviousPetContext;
+            if (state.ContextSet) { _damageContextPet = state.PreviousPetContext; _damageSourceProxyId = state.PreviousDamageSourceProxyId; }
         }
 
         internal static void BeginHpTelemetry(Stats stats, ref HpTelemetryState state)
@@ -306,11 +385,24 @@ namespace ErenshorPvP
             CaptureHpTelemetry(stats, ref state);
         }
 
-        internal static void BeginHealTelemetry(Stats stats, ref HpTelemetryState state)
+        internal static void BeginHealTelemetry(Stats stats, int requested, ref HpTelemetryState state)
         {
-            state = new HpTelemetryState { OwnsHealScope = true };
+            BeginHealTelemetry(stats, null, requested, ref state);
+        }
+
+        // Overload used where the caster is known (Stats.HealMe(Spell, int, bool, bool, Character)).
+        // The flat HealMe(int) overload has no source Character and therefore remains unattributed
+        // per proxy, but effective team healing is still measured from the real native HP delta.
+        internal static void BeginHealTelemetry(Stats stats, Character healer, int requested, ref HpTelemetryState state)
+        {
+            state = new HpTelemetryState { OwnsHealScope = true, RequestedHeal = requested };
             _healTelemetryDepth++;
-            if (_healTelemetryDepth == 1) CaptureHpTelemetry(stats, ref state);
+            if (_healTelemetryDepth == 1)
+            {
+                CaptureHpTelemetry(stats, ref state);
+                if (healer != null && EnemyActors.Contains(healer)) state.SourceProxyId = healer.gameObject.GetInstanceID();
+                if (state.SourceProxyId != 0) PvpTemporaryCloneFactory.ObserveHealMeEntered(state.SourceProxyId, stats, requested);
+            }
         }
 
         private static void CaptureHpTelemetry(Stats stats, ref HpTelemetryState state)
@@ -321,7 +413,7 @@ namespace ErenshorPvP
             bool enemy = EnemyActors.Contains(target);
             bool defender = Defenders.Contains(target) || DefenderPets.Contains(target) || RegisterDefenderPet(target);
             if (!enemy && !defender) return;
-            state.Track = true; state.TargetIsEnemy = enemy; state.StartingHp = stats.CurrentHP;
+            state.Track = true; state.TargetIsEnemy = enemy; state.StartingHp = stats.CurrentHP; state.StartingMaxHp = stats.CurrentMaxHP;
         }
 
         internal static void FinishHpReduction(Stats stats, HpTelemetryState state)
@@ -337,6 +429,7 @@ namespace ErenshorPvP
             else
             {
                 _damageToDefenders += applied;
+                if (_damageSourceProxyId != 0) PvpTemporaryCloneFactory.RecordDamageDealt(_damageSourceProxyId, applied);
                 if (!_loggedDamageToDefender)
                 {
                     _loggedDamageToDefender = true;
@@ -350,11 +443,15 @@ namespace ErenshorPvP
             try
             {
                 if (!state.Track || stats == null) return;
-                int applied = Mathf.Max(0, stats.CurrentHP - state.StartingHp);
-                if (applied <= 0) return;
+                int after = stats.CurrentHP;
+                int applied = Mathf.Max(0, after - state.StartingHp);
+                if (state.SourceProxyId != 0)
+                    PvpTemporaryCloneFactory.RecordHealMeObserved(state.SourceProxyId, stats, state.StartingHp, after, state.RequestedHeal);
+                if (applied <= 0) return; // accepted/full-health/overheal casts do not inflate FIGHT healing.
                 if (state.TargetIsEnemy)
                 {
                     _healingToAttackers += applied;
+                    if (state.SourceProxyId != 0) PvpTemporaryCloneFactory.RecordHealingDone(state.SourceProxyId, applied);
                     if (!_loggedHealToAttacker)
                     {
                         _loggedHealToAttacker = true;
@@ -367,6 +464,80 @@ namespace ErenshorPvP
             {
                 if (state.OwnsHealScope) _healTelemetryDepth = Math.Max(0, _healTelemetryDepth - 1);
             }
+        }
+
+        internal static bool PrepareStatusEffect(Stats targetStats, Spell spell, Character suppliedSource,
+            ref int result, ref StatusEffectTelemetryState state)
+        {
+            state = new StatusEffectTelemetryState();
+            Character source = PvpTemporaryCloneFactory.ResolveActiveSpellSource(spell, targetStats, suppliedSource);
+            Character target = null; try { target = targetStats == null ? null : targetStats.Myself; } catch { }
+            PvpSpellSemanticSnapshot semantic = PvpSpellSemantics.Inspect(spell);
+            Character policyTarget = semantic.DeclaresSelf && source != null ? source : target;
+            if (!AllowSpellStartResolved(null, spell, source, policyTarget, semantic))
+            {
+                result = 0;
+                return false;
+            }
+
+            if (!LethalFightActive || targetStats == null || spell == null) return true;
+            bool relevant = PvpTemporaryCloneFactory.IsTemporaryActor(source) || PvpTemporaryCloneFactory.IsTemporaryActor(target) ||
+                Defenders.Contains(source) || Defenders.Contains(target) || DefenderPets.Contains(source) || DefenderPets.Contains(target);
+            if (!relevant) return true;
+
+            state.Target = targetStats;
+            state.Spell = spell;
+            state.Source = source;
+            state.Track = true;
+            SnapshotStatusEffectState(targetStats, spell, out state.BeforeMatching, out state.BeforeMaxDuration, out state.BeforeSlots);
+            return true;
+        }
+
+        internal static void FinishStatusEffect(StatusEffectTelemetryState state)
+        {
+            if (state == null || state.Completed || !state.Track || state.Target == null || state.Spell == null) return;
+            state.Completed = true;
+            int afterMatching;
+            float afterDuration;
+            StatusEffect[] afterSlots;
+            SnapshotStatusEffectState(state.Target, state.Spell, out afterMatching, out afterDuration, out afterSlots);
+            bool newSlot = false;
+            if (afterSlots != null)
+            {
+                for (int i = 0; i < afterSlots.Length && !newSlot; i++)
+                {
+                    StatusEffect current = afterSlots[i];
+                    if (current == null) continue;
+                    bool existed = false;
+                    if (state.BeforeSlots != null)
+                        for (int j = 0; j < state.BeforeSlots.Length; j++)
+                            if (object.ReferenceEquals(state.BeforeSlots[j], current)) { existed = true; break; }
+                    if (!existed) newSlot = true;
+                }
+            }
+            string outcome = PvpSpellTargetPolicy.ClassifyStatusApplication(state.BeforeMatching, afterMatching, newSlot,
+                state.BeforeMaxDuration, afterDuration);
+            bool applied = outcome != "no_observable_state_change";
+            PvpTemporaryCloneFactory.RecordStatusEffectApplied(state.Source, state.Target, state.Spell, applied, outcome,
+                state.BeforeMatching, afterMatching, state.BeforeMaxDuration, afterDuration);
+        }
+
+        private static void SnapshotStatusEffectState(Stats stats, Spell spell, out int matching, out float maxDuration,
+            out StatusEffect[] matchingSlots)
+        {
+            matching = 0; maxDuration = 0f; matchingSlots = new StatusEffect[0];
+            if (stats == null || spell == null || stats.StatusEffects == null) return;
+            List<StatusEffect> slots = new List<StatusEffect>();
+            StatusEffect[] effects = stats.StatusEffects;
+            for (int i = 0; i < effects.Length; i++)
+            {
+                StatusEffect slot = effects[i];
+                if (slot == null || slot.Effect != spell) continue;
+                matching++;
+                if (slot.Duration > maxDuration) maxDuration = slot.Duration;
+                slots.Add(slot);
+            }
+            matchingSlots = slots.ToArray();
         }
 
         internal static bool AllowHeal(Stats targetStats, Character healer)
@@ -403,6 +574,48 @@ namespace ErenshorPvP
             return actor != null && (Defenders.Contains(actor) || DefenderPets.Contains(actor) || RegisterDefenderPet(actor));
         }
 
+        // PvP-only semantic team query used by the allied-heal bridge. Native NPC.CheckHeals can
+        // self-heal temporary non-Sim proxies, but its ordinary ally paths require native InGroup /
+        // SimPlayerTracking membership that these disposable actors deliberately never enter.
+        // Restricting this query to EnemyActors prevents unrelated world actors or defenders from
+        // becoming synthetic heal targets while leaving all ordinary world-combat heals native.
+        internal static bool TryFindInjuredAttackerAlly(Character healer, out Character ally, out float healthRatio)
+        {
+            ally = null; healthRatio = 1f;
+            if (!LethalFightActive || healer == null || !EnemyActors.Contains(healer)) return false;
+            float best = 1f;
+            foreach (Character candidate in EnemyActors)
+            {
+                try
+                {
+                    if (candidate == null || candidate == healer || !candidate.Alive || candidate.MyStats == null ||
+                        candidate.MyStats.CurrentMaxHP <= 0) continue;
+                    int hp = candidate.MyStats.CurrentHP, maxHp = candidate.MyStats.CurrentMaxHP;
+                    if (!PvpSpellExecutionPolicy.LegalProxyAllyHealTarget(true, true, false, hp, maxHp)) continue;
+                    float ratio = Mathf.Clamp01((float)Math.Max(0, hp) / Math.Max(1, maxHp));
+                    if (ally == null || ratio < best) { ally = candidate; best = ratio; }
+                }
+                catch { /* destroyed/transitioning match actors fail closed as heal candidates */ }
+            }
+            if (ally == null) return false;
+            healthRatio = best;
+            return true;
+        }
+
+        internal static string LiveCombatPresentationSummary()
+        {
+            if (!LethalFightActive) return string.Empty;
+            int livingAttackers = EnemyActors.Count(x => x != null && x.Alive && x.MyStats != null && x.MyStats.CurrentHP > 0);
+            int attackerHp = EnemyActors.Where(x => x != null && x.MyStats != null).Sum(x => Math.Max(0, x.MyStats.CurrentHP));
+            int attackerMax = EnemyActors.Where(x => x != null && x.MyStats != null).Sum(x => Math.Max(0, x.MyStats.CurrentMaxHP));
+            int playerHp = _player == null || _player.MyStats == null ? 0 : Math.Max(0, _player.MyStats.CurrentHP);
+            int playerMax = _player == null || _player.MyStats == null ? 0 : Math.Max(0, _player.MyStats.CurrentMaxHP);
+            return "Your HP " + playerHp + "/" + playerMax + "   Opponents " + attackerHp + "/" + attackerMax +
+                " (" + livingAttackers + " alive)\n" +
+                "Damage dealt to attackers " + _damageToAttackers + "   Damage taken by defenders " + _damageToDefenders +
+                "\nHealing to attackers " + _healingToAttackers + "   Healing to defenders " + _healingToDefenders;
+        }
+
         // Native AI may expand from the initially seeded defender target into ordinary world combat.
         // A proxy target is permitted unless it is its own PvP team or current native state positively
         // proves the actor is protected neutral/noncombat. Native hostility/faction logic remains primary.
@@ -413,7 +626,12 @@ namespace ErenshorPvP
 
         internal static bool IsProtectedWorldActor(Character actor)
         {
-            if (actor == null || EnemyActors.Contains(actor) || Defenders.Contains(actor) || DefenderPets.Contains(actor)) return false;
+            if (actor == null || EnemyActors.Contains(actor)) return false;
+            // Authority outranks the defender snapshot. If COOP attaches network ownership after a
+            // match started, the actor stops being locally mutable even if it was previously local.
+            if (PvpCompatibility.IsNetworkOwnedActor(actor)) return true;
+            if (Defenders.Contains(actor) || DefenderPets.Contains(actor)) return false;
+            // Ordinary local Sims remain world combatants.
             NPC npc = CharacterNpc(actor);
             try
             {
@@ -447,6 +665,7 @@ namespace ErenshorPvP
             NPC npc = CharacterNpc(actor);
             try
             {
+                if (PvpCompatibility.IsNetworkOwnedActor(actor)) return "protected_network_actor:" + Describe(actor, npc);
                 if (npc != null && (npc.SimPlayer || npc.ThisSim != null)) return "world_sim:" + Describe(actor, npc);
                 if (actor.Master != null || (npc != null && npc.SummonedByPlayer)) return "world_pet:" + Describe(actor, npc);
             }
@@ -505,31 +724,27 @@ namespace ErenshorPvP
             Defenders.Add(player); AddPartyDefenders(); SnapshotDefenderPets();
             _fightStartedAt = Time.unscaledTime; _combatStartupDeadline = _fightStartedAt + PvpCombatStartupPolicy.DefaultStartupWindowSeconds;
             _damageToAttackers = 0; _petDamageToAttackers = 0; _damageToDefenders = 0;
-            _healingToAttackers = 0; _healingToDefenders = 0; _damageContextPet = false; _healTelemetryDepth = 0;
+            _healingToAttackers = 0; _healingToDefenders = 0; _damageContextPet = false; _damageSourceProxyId = 0; _healTelemetryDepth = 0;
             _loggedDamageToDefender = false; _loggedHealToAttacker = false;
             _lethalFight = true; _retreatRolled = false;
             try
             {
-                // GO is a bounded release, but native NPC.Start owns the complete actor lifecycle.
-                // Prepare every proxy first, then enable every NPC in one loop. Do not manufacture
-                // NavUpdate/BehaviorUpdate coroutines here: native Start owns that graph.
-                //
-                // The NavMeshAgent itself is a different question. PvP disables the agent during
-                // countdown (PrepareTeamForCountdown / MaintainCountdownHold), and native Start does
-                // not re-enable a component PvP turned off - it only launches NavUpdate. Running
-                // UpdateNav against a disabled agent faults on the first destination write, every
-                // proxy trips CompleteNativeNavFailure, and the match dies as
-                // technical_failure_ai_inactive with the attackers standing still. Release the agent
-                // here, before the NPC is enabled, so Start's NavUpdate has a live agent to drive.
+                // GO releases the inert structural proxy. NPC.Start is intentionally enabled here,
+                // after the countdown, so Unity owns the proxy's natural Start callback and its
+                // native loop creation. The bounded startup watchdog classifies a post-GO failure.
+                PvpTemporaryCloneFactory.NotifyGoReleased();
+                int seeded = 0;
                 for (int i = 0; i < EnemyNpcs.Count; i++)
                 {
-                    PvpTemporaryCloneFactory.PrepareNativeStartProbe(EnemyNpcs[i]);
-                    if (cloneSpells != null && i < cloneSpells.Count && cloneSpells[i] != null)
-                        cloneSpells[i].enabled = cloneSpells[i].KnownSpells != null && cloneSpells[i].KnownSpells.Count > 0;
-                    EnemyActors[i].enabled = true;
+                    NPC npc = EnemyNpcs[i]; Character actor = EnemyActors[i];
+                    CastSpell caster = cloneSpells != null && i < cloneSpells.Count ? cloneSpells[i] : null;
+                    if (caster != null) caster.enabled = true;
+                    actor.enabled = true;
+                    npc.enabled = true;
+                    npc.NeverAggro = false;
                     try
                     {
-                        NavMeshAgent nav = EnemyActors[i].GetComponent<NavMeshAgent>();
+                        NavMeshAgent nav = actor.GetComponent<NavMeshAgent>();
                         if (nav != null)
                         {
                             nav.enabled = true;
@@ -537,18 +752,18 @@ namespace ErenshorPvP
                         }
                     }
                     catch { }
-                    EnemyNpcs[i].NeverAggro = false;
+                    Character target = Defenders[i % Defenders.Count];
+                    npc.ForceAggroOn(target);
+                    bool accepted = npc.CurrentAggroTarget == target;
+                    if (accepted) seeded++;
+                    PvpDiagnostics.Log("go_target_seed proxy=" + (i + 1) + "; target=" +
+                        DescribeCombatTarget(target) + "; accepted=" + accepted);
                 }
                 PvpDiagnostics.Log("go_release attackers=" + EnemyNpcs.Count +
-                    "; neverAggro=false; defenders_released=true; native_start_pending=" + EnemyNpcs.Count);
-                for (int i = 0; i < EnemyNpcs.Count; i++) EnemyNpcs[i].enabled = true;
-
-                // Target seeding is performed by ObserveProxyNativeStartCompleted after native Start
-                // has finished and PvP identity/reward constraints have been reasserted. A coroutine
-                // handle is deliberately NOT considered navigation health.
+                    "; neverAggro=false; defenders_released=true; natural_start=enabled_after_go; target_seeded=" + seeded);
                 PvpDiagnostics.Log("lethal_started attackers=" + EnemyActors.Count + "; defenders=" + Defenders.Count +
                     "; defender_pets=" + DefenderPets.Count + "; player_hp=" + player.MyStats.CurrentHP + "/" +
-                    player.MyStats.CurrentMaxHP + "; nav_health=pending_native_progress");
+                    player.MyStats.CurrentMaxHP + "; nav_health=prewarmed");
                 return "[Erenshor PvP] Lethal team PvP started: " + EnemyActors.Count +
                     " attacker(s) vs " + Defenders.Count + " defender(s).";
             }
@@ -669,6 +884,9 @@ namespace ErenshorPvP
                     "; damage_to_defenders=" + _damageToDefenders + "; healing_to_defenders=" + _healingToDefenders +
                     "; " + PvpTemporaryCloneFactory.BalanceRuntimeSummary() +
                     "; healing_assessment=" + PvpTemporaryCloneFactory.BalanceHealingAssessment(_healingToAttackers));
+                // One bounded per-proxy line per fight, logged here only - never per frame. See
+                // PvpTemporaryCloneFactory.LogPerProxyAbilitySummary.
+                PvpTemporaryCloneFactory.LogPerProxyAbilitySummary();
             }
             catch { }
         }
@@ -757,26 +975,66 @@ namespace ErenshorPvP
     internal static class PvpSpellHealTelemetryPatch
     {
         [HarmonyPrefix]
-        private static bool Prefix(Stats __instance, Character __4, ref PvpCombatContainment.HpTelemetryState __state)
+        private static bool Prefix(Stats __instance, Spell __0, int __1, Character __4, ref PvpCombatContainment.HpTelemetryState __state)
         {
             __state = new PvpCombatContainment.HpTelemetryState();
             if (!PvpCombatContainment.AllowHeal(__instance, __4)) return false;
-            PvpCombatContainment.BeginHealTelemetry(__instance, ref __state);
+            PvpCombatContainment.BeginHealTelemetry(__instance, __4, __1, ref __state);
             return true;
         }
-        [HarmonyPostfix]
-        private static void Postfix(Stats __instance, PvpCombatContainment.HpTelemetryState __state)
-        { PvpCombatContainment.FinishHpHealing(__instance, __state); }
+        [HarmonyFinalizer]
+        private static Exception Finalizer(Exception __exception, Stats __instance, PvpCombatContainment.HpTelemetryState __state)
+        { PvpCombatContainment.FinishHpHealing(__instance, __state); return __exception; }
     }
 
     [HarmonyPatch(typeof(Stats), "HealMe", new Type[] { typeof(int) })]
     internal static class PvpFlatHealTelemetryPatch
     {
         [HarmonyPrefix]
-        private static void Prefix(Stats __instance, ref PvpCombatContainment.HpTelemetryState __state)
-        { PvpCombatContainment.BeginHealTelemetry(__instance, ref __state); }
-        [HarmonyPostfix]
-        private static void Postfix(Stats __instance, PvpCombatContainment.HpTelemetryState __state)
-        { PvpCombatContainment.FinishHpHealing(__instance, __state); }
+        private static void Prefix(Stats __instance, int __0, ref PvpCombatContainment.HpTelemetryState __state)
+        { PvpCombatContainment.BeginHealTelemetry(__instance, __0, ref __state); }
+        [HarmonyFinalizer]
+        private static Exception Finalizer(Exception __exception, Stats __instance, PvpCombatContainment.HpTelemetryState __state)
+        { PvpCombatContainment.FinishHpHealing(__instance, __state); return __exception; }
+    }
+
+    [HarmonyPatch(typeof(Stats), "AddStatusEffect", new Type[] { typeof(Spell), typeof(bool), typeof(int) })]
+    internal static class PvpStatusEffect3Patch
+    {
+        [HarmonyPrefix]
+        private static bool Prefix(Stats __instance, Spell __0, ref int __result, ref PvpCombatContainment.StatusEffectTelemetryState __state)
+        { return PvpCombatContainment.PrepareStatusEffect(__instance, __0, null, ref __result, ref __state); }
+        [HarmonyFinalizer] private static Exception Finalizer(Exception __exception, PvpCombatContainment.StatusEffectTelemetryState __state)
+        { PvpCombatContainment.FinishStatusEffect(__state); return __exception; }
+    }
+
+    [HarmonyPatch(typeof(Stats), "AddStatusEffect", new Type[] { typeof(Spell), typeof(bool), typeof(int), typeof(Character) })]
+    internal static class PvpStatusEffect4Patch
+    {
+        [HarmonyPrefix]
+        private static bool Prefix(Stats __instance, Spell __0, Character __3, ref int __result, ref PvpCombatContainment.StatusEffectTelemetryState __state)
+        { return PvpCombatContainment.PrepareStatusEffect(__instance, __0, __3, ref __result, ref __state); }
+        [HarmonyFinalizer] private static Exception Finalizer(Exception __exception, PvpCombatContainment.StatusEffectTelemetryState __state)
+        { PvpCombatContainment.FinishStatusEffect(__state); return __exception; }
+    }
+
+    [HarmonyPatch(typeof(Stats), "AddStatusEffect", new Type[] { typeof(Spell), typeof(bool), typeof(int), typeof(Character), typeof(float) })]
+    internal static class PvpStatusEffect5Patch
+    {
+        [HarmonyPrefix]
+        private static bool Prefix(Stats __instance, Spell __0, Character __3, ref int __result, ref PvpCombatContainment.StatusEffectTelemetryState __state)
+        { return PvpCombatContainment.PrepareStatusEffect(__instance, __0, __3, ref __result, ref __state); }
+        [HarmonyFinalizer] private static Exception Finalizer(Exception __exception, PvpCombatContainment.StatusEffectTelemetryState __state)
+        { PvpCombatContainment.FinishStatusEffect(__state); return __exception; }
+    }
+
+    [HarmonyPatch(typeof(Stats), "AddStatusEffectNoChecks", new Type[] { typeof(Spell), typeof(bool), typeof(int), typeof(Character) })]
+    internal static class PvpStatusEffectNoChecksPatch
+    {
+        [HarmonyPrefix]
+        private static bool Prefix(Stats __instance, Spell __0, Character __3, ref PvpCombatContainment.StatusEffectTelemetryState __state)
+        { int ignored = 0; return PvpCombatContainment.PrepareStatusEffect(__instance, __0, __3, ref ignored, ref __state); }
+        [HarmonyFinalizer] private static Exception Finalizer(Exception __exception, PvpCombatContainment.StatusEffectTelemetryState __state)
+        { PvpCombatContainment.FinishStatusEffect(__state); return __exception; }
     }
 }

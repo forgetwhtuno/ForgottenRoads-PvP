@@ -17,7 +17,9 @@ namespace ErenshorPvP
             bool invulnerable, bool neverAggro, bool resourceObject, bool knownFriendlyFaction)
         {
             if (simPlayer || ownedOrSummoned) return false;
-            return vendor || invulnerable || neverAggro || resourceObject || knownFriendlyFaction;
+            // Faction friendliness or temporary invulnerability alone does not prove noncombat.
+            // Friendly guards/healers and phase-invulnerable hostiles are legitimate world actors.
+            return vendor || neverAggro || resourceObject || (invulnerable && knownFriendlyFaction);
         }
 
         internal static PvpInteractionDecision DecideAggro(bool sourceAttacker, bool sourceDefender,
@@ -43,7 +45,12 @@ namespace ErenshorPvP
             bool playerSide = sourceDefender || unknownPlayerProjectile;
             if ((targetDefender && sourceAttacker) || (targetAttacker && playerSide))
                 return PvpInteractionDecision.AllowMatch;
+            // A positively identified same-team source is left to native friendly-fire/AoE rules.
+            // An unattributed player projectile remains blocked against the defender team because PvP
+            // cannot prove which native actor owned it.
             if ((targetDefender && sourceDefender) || (targetAttacker && sourceAttacker))
+                return PvpInteractionDecision.AllowMatch;
+            if (targetDefender && unknownPlayerProjectile)
                 return PvpInteractionDecision.Block;
 
             bool sourceParticipant = sourceAttacker || playerSide;
@@ -87,7 +94,10 @@ namespace ErenshorPvP
             if (sourceDefender && targetAttacker)
                 return beneficial ? PvpInteractionDecision.Block : PvpInteractionDecision.AllowMatch;
             if ((sourceAttacker && targetAttacker) || (sourceDefender && targetDefender))
-                return beneficial ? PvpInteractionDecision.AllowMatch : PvpInteractionDecision.Block;
+                // Beneficial edges are legal team support. Harmful starts are also admitted here and
+                // left to native friendly-fire/per-target rules; PvP does not invent a second arena
+                // damage model after native targeting has already selected an affected actor.
+                return PvpInteractionDecision.AllowMatch;
 
             bool targetParticipant = targetDefender || targetAttacker;
             if ((sourceParticipant && targetProtected) || (sourceProtected && targetParticipant))
@@ -102,7 +112,9 @@ namespace ErenshorPvP
             if (IsProtectedNonCombat(false, true, true, true, true, true, true)) return "FAIL pet misclassified protected";
             if (!IsProtectedNonCombat(false, false, true, false, false, false, false)) return "FAIL vendor protection";
             if (!IsProtectedNonCombat(false, false, false, false, true, false, false)) return "FAIL never-aggro protection";
-            if (!IsProtectedNonCombat(false, false, false, false, false, false, true)) return "FAIL friendly faction protection";
+            if (IsProtectedNonCombat(false, false, false, false, false, false, true)) return "FAIL friendly combatant overprotected";
+            if (IsProtectedNonCombat(false, false, false, true, false, false, false)) return "FAIL invulnerable hostile overprotected";
+            if (!IsProtectedNonCombat(false, false, false, true, false, false, true)) return "FAIL invulnerable friendly neutral protection";
             if (IsProtectedNonCombat(false, false, false, false, false, false, false)) return "FAIL unknown world actor overprotected";
 
             if (DecideAggro(true, false, false, true, false, false) != PvpInteractionDecision.AllowMatch) return "FAIL pvp hostile aggro";
@@ -114,6 +126,9 @@ namespace ErenshorPvP
             if (DecideDamage(false, true, false, false, false, false, false) != PvpInteractionDecision.AllowWorld) return "FAIL outside damage to attacker";
             if (DecideDamage(false, false, true, false, false, false, false) != PvpInteractionDecision.AllowWorld) return "FAIL proxy damage to world combatant";
             if (DecideDamage(false, false, true, false, false, false, true) != PvpInteractionDecision.Block) return "FAIL protected target damage";
+            if (DecideDamage(true, false, false, true, false, false, false) != PvpInteractionDecision.AllowMatch) return "FAIL defender native same-team damage admission";
+            if (DecideDamage(false, true, true, false, false, false, false) != PvpInteractionDecision.AllowMatch) return "FAIL attacker native same-team damage admission";
+            if (DecideDamage(true, false, false, false, true, false, false) != PvpInteractionDecision.Block) return "FAIL player projectile friendly fire";
 
             if (DecideHeal(true, false, false, false, false, false) != PvpInteractionDecision.AllowWorld) return "FAIL outside heal to defender";
             if (DecideHeal(false, true, false, false, false, false) != PvpInteractionDecision.AllowWorld) return "FAIL outside heal to attacker";
@@ -123,6 +138,8 @@ namespace ErenshorPvP
             if (DecideSpellStart(true, false, false, false, true, false, false, false) != PvpInteractionDecision.AllowMatch) return "FAIL defender AE start";
             if (DecideSpellStart(false, true, false, false, false, false, false, false) != PvpInteractionDecision.AllowWorld) return "FAIL attacker world spell";
             if (DecideSpellStart(false, true, false, false, false, false, false, true) != PvpInteractionDecision.Block) return "FAIL protected targeted spell";
+            if (DecideSpellStart(false, true, false, true, false, false, false, false) != PvpInteractionDecision.AllowMatch) return "FAIL attacker same-team harmful native spell";
+            if (DecideSpellStart(true, false, true, false, false, false, false, false) != PvpInteractionDecision.AllowMatch) return "FAIL defender same-team harmful native spell";
             return "PASS pvp world combat policy";
         }
     }

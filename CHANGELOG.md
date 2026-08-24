@@ -1,5 +1,168 @@
 # Changelog
 
+## 0.5.34 - pre-opportunity world-context safety
+
+- Adds one shared, deterministic pre-opportunity gate for arranged offers, wild ambushes, Nemesis requests, and arranged acceptance.
+- DESIGN-SELECTED level floor: player level 3. Party-average matchmaking remains unchanged.
+- Suppresses opportunities during native combat, a 20-second post-combat grace period, unsafe party state, restricted/zoning state, or within 12m of an external NPC-backed world actor; resource nodes and party-owned actors are excluded.
+- Preserves existing final spawn clearance and all post-GO world-combat containment behavior.
+
+## 0.5.33 - equipment presentation fidelity
+
+- Release identity: `pvp-0.5.33-equipment-presentation-fidelity-r1`.
+- Preserves the native ModularParts transform-cache rebuild, selected-branch leg checks, and normalized native two-handed presentation repair.
+
+## 0.5.32 - reward safety rehydration repair
+
+- Current `Assembly-CSharp.dll` inspection proves `Character.Start` writes temporary-proxy `xp` and `factionMods` after the initial reward-suppression snapshot.
+- Treats the `Character.Start` postfix as the final pre-GO reward-hydration boundary: it reapplies suppression once, then records the existing live Character/LootTable identity proof.
+- Makes pre-GO readiness require completed `Character.Start` plus the authoritative proof; countdown hold remains verification-only and fails closed on any nonzero XP, faction mutation, loot state, or stale identity.
+- Corrects the narrow Harmony target ownership so the Character and deferred NPC Start patches are registered on their respective patch classes.
+- Preserves combat, visual, pants-observer, and reward-hold behavior; live QA is still required.
+
+## 0.5.16 - reward-suppression readiness / final pre-GO barrier
+
+- Requires both native Character.Start and NPC.Start completion before reward readiness.
+- Verifies current Character/LootTable identity and fails closed on stale or unsuppressed reward state.
+- Preserves the 0.5.15 native combat-loop ownership and pre-GO containment.
+
+## 0.5.14 - pre-GO structural NavMesh readiness / native heal selftest repair
+
+- Replaces the circular pre-GO requirement for an observed `NPC.UpdateNav` step with a structural NavMeshAgent readiness contract while preparation deliberately holds navigation stopped, aggression disabled, and targets clear.
+- Keeps the existing native nav coroutine/UpdateNav/path/displacement probe unchanged as post-GO operational movement evidence.
+- Clears stale borrowed paths with `ResetPath()` while holding the agent stopped; no pre-GO destination, pursuit, aggression, teleport, or visible movement is seeded.
+- Repairs `/epvp selftest` heal-threshold proof: current `NPC.CheckHeals` IL must contain the expected native `0.66f` threshold, while behavior is tested clearly below/above the floating-point equality boundary.
+- Preserves the 0.5.13 SpellVessel/healing/status convergence paths for their first fair live test after GO.
+
+## 0.5.13 - native combat convergence / Duel parity / pre-GO readiness
+
+- Ported the current Practice Duel target-semantic pattern for player self-beneficial casts: ordinary
+  single-target heals can adapt the `StartSpell` Stats argument from the selected PvP opponent to the
+  caster without changing `PlayerControl.CurrentTarget`; `SelfOnly`, `ApplyToCaster`, and
+  `InflictOnSelf` are authorized as self semantics without broadly rewriting every beneficial spell.
+- Added explicit spell semantics so direct HP heals/HoTs are distinct from beneficial buffs, self
+  utility, damage, debuffs, CC, and area effects. Temporary proxy loadouts keep normal combat-capable
+  class abilities while excluding proven unsafe pet/charm automation shapes.
+- Added a narrow current-assembly `SpellVessel.FixedUpdate` compatibility bridge for active temporary
+  non-Sim PvP proxy vessels. It temporarily mirrors the native Sim interruption distinction only for
+  a live valid proxy cast, restores the original `interruptable` field in a Harmony Finalizer, and
+  leaves `ResolveSpell`, `Stats.HealMe`, status application, magnitude, mana, range, cooldowns, and
+  persistent Sim identity native.
+- Instrumented vessel creation/resolution, HealMe entry and actual HP before/after, and verified status
+  slot changes. Status telemetry now distinguishes proven new/replaced application, proven refresh,
+  and no observable native state change; exception-safe Harmony Finalizers close HealMe/status
+  telemetry exactly once. Accepted beneficial casts no longer count as healing; FIGHT healing remains
+  actual effective HP restored only.
+- Reworked match startup so natural native Start/runtime preparation completes while opponents remain
+  inert before the visible countdown. A bounded readiness barrier and timeout prevent GO with
+  `native_start_pending`; `atkSpellDelay` is allowed to drain in native units rather than being forced
+  to zero. First target/movement/melee/spell-request latency is logged from GO.
+- Preserved the 0.5.12 one-time synthetic `NPCSpellCooldown` startup normalization, native post-cast
+  cooldown ownership, MMO world-combat expansion, movement/melee, rewards/cleanup, FIGHT panel, and
+  public Nemesis/PvP contracts. Live gameplay validation is still required before release claims.
+
+## 0.5.12 - native spell/heal execution repair
+
+- Traced the current `NPC.DoAttackSpell` path against the supplied `Assembly-CSharp.dll`. Temporary
+  PvP proxies must remain `SimPlayer=false`, but current `NPC.Start` gives ordinary NPCs an initial
+  `NPCSpellCooldown` of roughly 20-360 while `DoAttackSpell` returns immediately for non-Sims until
+  that value reaches zero. `NPC.SetAttackRanges` decrements the field at `60 * deltaTime`, so this
+  startup gate can consume most or all of a short PvP match. The repair clears only that synthetic
+  initial cooldown once after native `NPC.Start` (and the existing recoverable Start-fault path).
+  Post-cast `NPCSpellCooldown`, `atkSpellDelay`, `forceSpellCD`, mana, range, native spell selection,
+  animation, and effects remain game-owned.
+- Reworked spell observability so `DoAttackSpell` entry is an AI evaluation, not a cast. Bounded
+  diagnostics now distinguish concrete `CastSpell.StartSpell` request, PvP-boundary rejection, the
+  actual native bool return, observed cast state, completion, and native damage/healing effect.
+  Independent per-stage log budgets prevent repeated AI entries from hiding later request/result
+  evidence. One successfully accepted cast by a loaded native SimPlayer is captured per match as a
+  read-only comparison snapshot.
+- Preserved native self-healing and added a narrow attacker-team ally-heal bridge for disposable
+  non-Sim proxies. Current native `NPC.CheckHeals` self-heals below 66% HP but its ally branches rely
+  on native group/Sim tracking that PvP proxies deliberately never enter. The bridge chooses only
+  another living injured attacker, uses the proxy's native `MemmedHealSpells`, respects range/mana
+  and native heal cadence, and invokes `CastSpell.StartSpell(Spell, Stats)`; no spell damage or
+  healing is synthesized.
+- Added restrained FIGHT-tab feedback for current player HP, combined attacker HP, damage to each
+  side, and healing to each side. Labels intentionally describe team aggregates rather than
+  pretending existing telemetry can attribute every world-combat delta to the player alone.
+- Extended deterministic/source/current-assembly coverage for the spell/heal boundary while keeping
+  native `NPC.Start`, navigation, shell-follow, melee, world-combat participation, reward/cleanup,
+  and `ErenshorPvpApi` / `ErenshorPvpEvents` / Nemesis contracts unchanged. This remains a live-QA
+  candidate, not a release-ready claim.
+
+## 0.5.11 - deep PvP stabilization / world-combat correctness
+
+- Repaired the active-combat boundary to match Forgotten Roads' MMO world-combat policy. Ordinary
+  local Sims, party Sims, owned pets, hostile mobs, existing enemies, heals, buffs/debuffs, and AoE
+  interactions may expand the native combat graph without cancelling/despawning the PvP encounter.
+  Protected filtering is now narrow: vendor, `NeverAggro`, and resource-object signals remain
+  protected; invulnerability is protective only when paired with a known friendly non-Sim faction.
+  Friendly faction or temporary invulnerability alone no longer turns a combat-capable world actor
+  into a sealed-arena exclusion.
+- Fixed unattributed player-projectile friendly fire. A player-origin projectile whose source actor
+  cannot be resolved now still counts as defender-side for both attacker hits and same-side defender
+  rejection instead of falling through as generic world damage.
+- Fixed terminal-result classification. Competitive history is now a positive allow-list
+  (`proxy_death`, `player_death`, `player_fled`, `retreat`); unknown/internal/runtime failures cannot
+  become wins/losses merely because they were not named by a technical-failure deny-list. Rewards
+  remain exact `proxy_death` + winner only.
+- Hardened COOP authority detection against the current namespaced `ErenshorCoop.NetworkedPlayer`
+  and `ErenshorCoop.NetworkedSim` components. Network-owned actors are protected from local PvP
+  mutation, and authority is revalidated when an accepted challenge starts, immediately before GO,
+  and once per second during an active encounter. A COOP/network authority appearance cancels as a
+  noncompetitive result; ordinary local world-combat participation does not. Hot damage/aggro hooks
+  reuse the cached type binding instead of rescanning loaded assemblies per effect.
+- Narrowed cleanup ownership for defender pets. Match cleanup clears a pet target only when the pet
+  is still targeting a temporary PvP attacker; a legitimate world-mob target acquired during the
+  encounter is left to native Erenshor combat.
+- Preserved the 0.5.10 per-proxy native `NPC.Start` fault isolation. One unrecoverable proxy can be
+  retired without destroying an otherwise valid active match; complete attacker loss still fails
+  closed. Native `NPC.Start`, `NavMeshAgent`, nav/behavior coroutines, class AI, and Erenshor combat
+  math remain authoritative.
+- Added portable source regressions and a standard-library CLR metadata verifier. Against the bundled
+  current `Assembly-CSharp.dll` SHA-256
+  `B840CB8076ED0553F7DC3BEB4042ABA653917882F763181EC0D2C13C26C17847`, the verifier confirms 24
+  PvP Harmony target/overload surfaces. This is static assembly evidence, not a substitute for live QA.
+
+### Earlier 0.5.11 - per-proxy ability-use observability
+
+- Investigated whether the 0.5.10 live-good attackers actually terminate an active fight at 30
+  seconds, as reported. They do not: the only 30-second timers in PvP are `PvpController._pendingExpires`
+  (arranged-challenge offer expiration, before the fight even starts) and
+  `PvpTemporaryCloneFactory._despawnAt` (a pre-GO setup safety despawn - once `BeginLethalFight`
+  actually activates the fight, `_despawnAt` is set to `float.PositiveInfinity` and stops applying
+  entirely). No source change was made for this; inventing a new active-combat timer was explicitly
+  out of scope. See CHANGELOG discussion / live report for the full timer inventory.
+- Added per-proxy ability-use diagnostics so the terminal encounter summary can answer "did this
+  proxy actually evaluate and use its abilities" without dumping a spellbook or logging per frame.
+  Native `NPC` AI, `DoAttackSkill`/`DoAttackSpell`, and `CastSpell.StartSpell` remain fully
+  authoritative; nothing here forces a cast or adds a rotation.
+  - `PvpTemporaryCloneFactory.LogPerProxyAbilitySummary()` logs exactly one bounded
+    `proxy_ability_summary` line per temporary attacker when a fight ends (called once from
+    `PvpCombatContainment.LogBalanceSummary`, alongside the existing whole-team `balance_summary`
+    line): class/profile, admitted offensive/heal spell counts, `CheckHeals` evaluations,
+    `DoAttackSkill`/`DoAttackSpell` decisions, observed `StartSpell`-family starts, effective damage
+    dealt, effective healing done, and two classification labels (`ability_use`, `heal_assessment`).
+  - Effective damage/healing are now attributed per proxy. `PvpCombatContainment` threads the
+    attacker/healer identity across the existing `DamageMe`/`MagicDamageMe`/`BleedDamageMe` ->
+    `Stats.ReduceHP` and `Stats.HealMe(Spell,...)` telemetry boundaries, the same save/restore
+    pattern already used for pet-damage-context attribution, and records into two new per-proxy maps
+    only when the source is a temporary attacker.
+  - Fixed a presentation bug in the existing whole-team `balance_summary`/`BalanceRuntimeSummary`
+    line: it reported the combined `DoAttackSkill` + `DoAttackSpell` decision count under the single
+    label `attack_spell_decisions`, understating how much of that total was actually spell usage.
+    It now reports `attack_skill_decisions` and `attack_spell_decisions` separately from split
+    per-proxy counters; no other field in that line changed.
+  - Added `PvpProxyStartupPolicy.ProxyAbilityUseAssessment(...)`, a pure classification function in
+    the same style as the existing `ZeroHealingAssessment`. It distinguishes "no class abilities
+    loaded" (a real, expected outcome for e.g. a pure-melee loadout - reported accurately, not as a
+    failure) from "loaded but never evaluated" from "evaluated but never cast" from "cast but no
+    measurable outcome landed" from confirmed use. The existing `ZeroHealingAssessment` is reused
+    unchanged at the per-proxy level for the heal-specific classification.
+  - No existing telemetry, decision logic, spawn/countdown/GO lifecycle, world-combat policy, or
+    protected-actor policy was touched; this is additive observability only.
+
 ## 0.5.10 - per-proxy Start fault isolation
 
 - Fixed a single proxy's native `NPC.Start` failure destroying the entire encounter. A live 5v5 ended

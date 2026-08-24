@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 
 namespace ErenshorPvP
 {
-    [LunarisPlugin("forgetwhtuno.erenshor.pvp", "0.5.10", "forgetwhtuno",
+    [LunarisPlugin("forgetwhtuno.erenshor.pvp", "0.5.34", "forgetwhtuno",
         "Standalone MMO-style PvP encounters for Erenshor: consensual arranged challenges and rare wild ambushes against off-map Sim proxies, with real player death/respawn.")]
     [LunarisPermission(LunarisPermission.Reflection | LunarisPermission.Harmony)]
     public sealed class ErenshorPvPPlugin : LunarisPlugin
@@ -60,7 +60,7 @@ namespace ErenshorPvP
             // assembly was 0.5.5, which made the startup line useless for confirming which DLL loaded -
             // exactly the check live acceptance depends on.
             Logging.LogInfo("Erenshor PvP " + ResolvePluginVersion() + " loaded. Disabled by default; use the retained PvP panel (or /epvp compatibility commands) to opt in.");
-            Logging.LogInfo("PvP runtime marker: plugin_identity=ErenshorPvP; revision=pvp-" + ResolvePluginVersion() + "-world-combat-r2");
+            Logging.LogInfo("PvP runtime marker: plugin_identity=ErenshorPvP; revision=pvp-0.5.34-preop-world-context-r1");
         }
 
         internal bool RuntimeHooksReady { get { return _runtimeHooksReady; } }

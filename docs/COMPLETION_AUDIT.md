@@ -1,85 +1,96 @@
-# Erenshor PvP 0.4.0 completion audit
+# Forgotten Roads PvP 0.5.11 deep stabilization audit
 
-This audit separates build/static evidence from behavior that must be observed inside Erenshor. Compilation alone is not accepted as proof of native Unity behavior.
+**Scope:** `forgetwhtuno/ForgottenRoads-PvP` only. This audit supersedes the old 0.4.0 arena/isolation-era completion language. It deliberately separates deterministic/static evidence from behavior that still requires Erenshor live QA.
 
-## Proven by source and deployed build
+## Starting state
 
-| Requirement | Evidence |
-|---|---|
-| Standalone plugin | `forgetwhtuno.erenshor.pvp` 0.4.0 builds without a Deep Sims reference; the optional bridge is reflection-only. |
-| Consent model | Arranged matches create a 30-second Accept/Refuse offer. Ambushes bypass the offer only after world PvP is enabled and only inside the exact ambush allowlist. |
-| Ambush cadence/motives | Natural ambush opportunities use configurable randomized 15-35 minute intervals and a separate chance roll. Pure tests prove arranged lines request consent, ambush lines do not, and camp claims require verified Hunt Camp context. |
-| Off-map identity | `PvpController.TrySelectOffMap` excludes every active `SimPlayer` tracking object and every profile whose native `SimPlayerTracking.CurScene` matches the current scene before snapshot selection. |
-| No persistent temporary Sim | Combat roots are native NPC proxies; visual Sim components are disabled and `LoadAllSimData` is suppressed during visual construction. |
-| Party rules | Pure policy/planner tests pass for solo 1-5 distribution, duo lone-attacker protection, full-party requirements, guild preference, and role diversity. |
-| Zone rules | Character selection, tutorials, cities/hubs, Port Azure, Stowaway's Step, and every island scene are hard protected; exact configurable lists remain available. |
-| Containment | Harmony damage/aggro guards keep proxies and outside NPCs out of one another's combat. Ordinary player/party world attacks remain legal and end the separate PvP encounter; verified third-party aggression cancels safely. Installed assembly signatures confirm attacker positions 3/3/2 and `_fromPlayer` position 1 for physical/magic/bleed damage. |
-| Rewards/records | Rewards occur only after all proxy actors are dead, use native XP/inventory APIs, reduce XP for low-risk matches while enforcing the configured XP cap, scale gold by party/level risk, and use a persisted cooldown. Wins/losses/escapes persist in BepInEx config. |
-| Cleanup | Manual despawn, failure, result, shutdown, and every scene transition destroy all proxy objects and cloned spells. |
-| UI/commands | Party Tools-style PVP/FIGHT/RULES/SCORE tabs, hidden TEST tab, map-side toggle, movable/clamped/persisted panel, exact arranged/ambush force commands, `/epvp team`, `/epvp diagnose`, `/epvp verify`, and `/epvp panelreset` compile in the deployed DLL. |
-| Deployed build candidate | 2026-08-11 one-click root build/install to the selected r2modman profile completed successfully. SHA-256: `9D504644C734EEBEF5CF0F141829843EBABD18880636CE1748A9E27628D9DF86`. |
-| Deployed pure self-tests | The prior installed candidate passed `PvpPolicy`, `PvpMatchmakingPolicy`, `PvpTeamPlanner`, `PvpEncounterFlavorFactory`, `PvpRewardService`, and `PvpPanelPositioning` self-tests on 2026-08-11. The current candidate adds defender-average and weighted-size cases and still requires one `/epvp selftest` capture in game. These cover rules, reward bounds, and panel math only, not live Unity combat. |
-| Companion build | Root `BUILD_AND_INSTALL.ps1` successfully built and installed Deep Sims, Follow, Practice Duels, PvP, Party Tools, and Campmaster in one run. |
-| Deep Sims bridge | Deployed assembly lookup resolves `ErenshorDeepSims.PvpEventBridge`; its public six-string signature matches the PvP publisher. |
-| Deep Sims regression safety | The standalone Deep Sims deterministic regression suite passed `222/222` tests after the deployed one-click build on 2026-08-11. |
+- Source version: **0.5.11**.
+- Starting local branch: `codex/forgotten-roads-consistency-20260815`.
+- Starting HEAD: `3847b8f810170c0753cde4f9a28cf15069a999fa` (`PvP 0.5.10: isolate per-proxy native Start faults`).
+- The supplied working tree already contained uncommitted 0.5.11 changes. This workstream preserved them and did not reset, commit, push, merge, create a PR, or publish a release.
+- Current assembly evidence used by the portable verifier: `Assembly-CSharp.dll` SHA-256 `B840CB8076ED0553F7DC3BEB4042ABA653917882F763181EC0D2C13C26C17847`.
 
-## Required live acceptance run
+## World-combat contract
 
-Perform this in a non-protected combat zone:
+Active PvP is **ordinary Erenshor world combat**, not a sealed duel bubble.
 
-```text
-/epvp on
-/epvp selftest
-/epvp diagnose
-/epvp force arranged 1
-/epvp team
-/epvp accept
-/epvp verify
-```
+Allowed to expand the live combat graph without ending PvP:
 
-Repeat `/epvp force arranged 2` through `5`, then in an allowed ambush scene repeat `/epvp force ambush 1` through `5`, completing or cleaning up each encounter before the next.
+- local Sims and party Sims;
+- player-/Sim-owned pets and summons when native ownership permits them to fight;
+- hostile mobs, existing enemies, and unrelated combat-capable world actors;
+- naturally acquired aggro;
+- legitimate damage, healing, buffs/debuffs, and AoE/PBAE interactions.
 
-Acceptance evidence:
+PvP intervenes only for its own team legality/ownership or when current state positively proves an actor needs protection. The protected-native classifier is intentionally narrow: vendor, `NeverAggro`, and resource-object evidence qualifies; invulnerability qualifies only together with a known friendly non-Sim faction. Friendly faction or temporary invulnerability by itself is not treated as proof of noncombat.
 
-- `selftest` reports all PASS.
-- `diagnose` reports ready, unprotected, not zoning, not co-op, at least the requested number of off-map profiles, and a live/resource template.
-- The pending composition contains the requested number and sensible level/class/role values.
-- Arranged mode waits for explicit acceptance; ambush mode displays motive-aware warning/chat and starts without an Accept prompt.
-- `/epvp diagnose` reports `ambush_allowed=true` only for exact configured wild zones and never for protected scenes.
-- Every attacker looks like a Sim, has equipment where its profile supplies equipment, and displays the correct nameplate rather than the borrowed creature.
-- `/epvp verify` reports both `VERIFY PASS` and `COMBAT VERIFY PASS`.
-- Melee attackers can damage and be damaged; profiles with admitted spells show nonzero spell counts and use native spells without healing indefinitely.
-- Player party Sims assist normally and do not damage one another.
-- Unrelated NPCs neither join nor damage participants; entering ordinary hostile combat cancels safely.
-- Victory occurs only after every attacker dies; low-health retreat grants no reward.
-- Player defeat uses normal Erenshor death, debuff, and respawn behavior.
-- Victory grants one XP/gold award; XP never exceeds the configured fraction of a level, and a second victory inside the cooldown grants none.
-- Cosmetic rewards remain disabled and do not write `TransmogSlots`; a slot-safe native unlock API is required before restoring them.
-- F10 panel drag persists and does not reset; map toggle remains usable without covering party/character UI.
-- PVP/FIGHT/RULES/SCORE tabs remain readable and update while the encounter changes state; TEST stays hidden until `/epvp debug`.
-- Scene transition and `/epvp despawn` leave no proxy, target, cloned spell, or stale pending offer.
-- When Deep Sims is installed, challenge/result facts may cause at most a normal bounded social reaction and never a gameplay action.
+Network-owned COOP actors are not classified as neutral NPCs; they are an **authority boundary**. Current `ErenshorCoop.NetworkedPlayer` / `ErenshorCoop.NetworkedSim` components are detected by full names and cached. Local PvP fails closed if network authority is active when the match starts, appears during countdown, or appears during an active fight.
 
-## Current evidence gap
+## Root causes repaired in this pass
 
-The source and deployed 0.4.0 build now include the Party Tools-style panel and the
-arranged/ambush test controls, but those controls still require a live in-game run.
-The live 2026-08-11 runs confirmed visible Sim animation, lethal damage, deaths, team
-completion, borrowed-mob reward suppression, class spell population, and meaningful
-combat pressure. A level-12 solo 1v1 ended in player victory after 20.0 seconds; a
-level-12 solo 2v1 ended in player death after 19.7 seconds. Saved equipment rendered,
-while the first fallback-equipment candidate returned zero items and failed verification;
-the next candidate merges all verified native item collections and logs its filter counts.
-Earlier runs also exposed missing held weapons and an unsafe cosmetic-slot write; the
-current source fixes the null hand-slot path and keeps cosmetics disabled.
-The merged fallback selector is now live-proven, including a ten-piece level/class fallback.
-A later run identified an outgoing area-effect containment gap: Moonburst reached local NPC
-Liam Kilfa, whose retaliatory damage was blocked before the encounter cancelled. The current
-candidate preserves ordinary player/party attacks against world NPCs but ends PvP when that
-happens; proxies and outside NPCs remain mutually excluded. New offer/spawn placement requires
-a clear navigable arena away from unrelated NPCs. The remaining evidence gap is the revised
-outside-actor boundary and clear placement, pet contribution, party-average selection, party assistance,
-normal death consequences, reward persistence,
-third-party aggro containment, and the panel's drag,
-clamping, persistence, and click-capture behavior. Capture the acceptance run above
-before calling the release behavior complete.
+1. **Unattributed player projectile friendly fire.** `unknownPlayerProjectile` was used to let a projectile hit a PvP attacker, but the same source was not treated as defender-side when its target was another defender. The effect could therefore fall through to `AllowWorld`. `DecideDamage` now uses the same `playerSide` identity for both valid opponent damage and same-side rejection.
+2. **Overbroad protected-actor classification.** Friendly faction or invulnerability alone could exclude actors that are still legitimate combat-capable world participants. The policy now protects only stronger noncombat evidence.
+3. **Technical failure could become a competitive result.** The old policy effectively treated anything not recognized by a narrow technical-failure list as competitive. Competitive completion is now a positive exact allow-list: `proxy_death`, `player_death`, `player_fled`, `retreat`. Rewards remain exact `proxy_death` with a winner.
+4. **Current COOP type names could be missed.** The prior unqualified type lookup did not reliably resolve current namespaced COOP types. Full names are now bound, with a constrained fallback scan inside ErenshorCoop assemblies. Hot damage/aggro checks reuse that binding instead of scanning assemblies per effect.
+5. **Network authority could change after offer-time validation.** Authority is now rechecked at the mutation boundary, immediately before GO, and periodically while a team is active.
+6. **Cleanup over-owned defender pets.** Ending PvP previously cleared pet aggro regardless of what the pet was currently fighting. Cleanup now clears only a target that is one of the temporary PvP attackers; a legitimate world-mob target is preserved.
+
+## Proxy/native lifecycle finding
+
+The 0.5.10 native-Start repair remains intact. PvP still lets native `NPC.Start` own initialization, NavMesh/behavior coroutine launch, and class AI. If one proxy faults in native Start, the fault handler reasserts only PvP-owned transient state and verifies native lifecycle evidence. A recoverable proxy remains; an unrecoverable proxy is removed from the attacker set and retired alone. The encounter becomes `runtime_invalid` only when no attacker remains.
+
+Before GO, team construction/preparation still fails closed when the requested team cannot be constructed safely or an attacker cannot meet required startup/reward invariants. That is intentional: silently changing the accepted attacker roster before the fight begins is different from losing one already-created proxy to an isolated runtime Start failure.
+
+## Current assembly surface verification
+
+`tests/verify_current_assembly_surface.py` parses CLR metadata directly and verifies the method/overload counts the current Harmony surface depends on. The current supplied assembly passed 24 target groups, including:
+
+- `NPC.Start`, `UpdateNav`, `HandleMaintenaceAndCounters`, `Update`, `Combat`, `PerformMeleeHit`, attack/heal decision methods, `AggroOn`, `ForceAggroOn`, `ManageAggro`;
+- `Character.DamageMe`, `MagicDamageMe`, `BleedDamageMe`, `DoDeath`;
+- `Stats.ReduceHP`, both `HealMe` overload shapes;
+- `CastSpell.StartSpell` overload shapes, `StartSpellFromProc`, `StartSpellNoAnim`;
+- `TypeText.CheckCommands` and `SimPlayer.LoadAllSimData`.
+
+This verifies that the expected managed method surfaces exist in that exact assembly. It does **not** prove live semantic behavior.
+
+## Deterministic/static evidence actually run in this workstream
+
+- `python3 tests/verify_current_assembly_surface.py` — **PASS** against the assembly hash above; 24 target groups verified.
+- `python3 tests/verify_pvp_stabilization_source.py` — **PASS**. Guards world-combat admission, narrow neutral protection, player-projectile friendly fire, network authority boundaries, result/reward allow-lists, per-proxy Start isolation, native coroutine/NavMesh ownership, repeated lifecycle cleanup, zoning, hot-unload, pet target cleanup, and retained-uGUI ownership.
+- `python3 tests/verify_retained_ui_source.py` — **PASS**.
+- `tests/RUN_UI_TESTS.ps1` — **NOT RUN in this sandbox** because PowerShell and a C# compiler are unavailable. Its C# policy executable therefore must not be reported as passing here.
+- Full DLL build — **NOT RUN in this sandbox** because no `dotnet`, MSBuild, Mono/C# compiler, or PowerShell toolchain is installed. The supplied assemblies were inspected, but source compilation still needs the normal Windows/Erenshor build environment.
+
+## Focused live QA matrix still required
+
+1. Arranged 1v1 clean start: challenge -> accept -> 3/2/1 -> one GO; verify real native targeting/movement/damage/death.
+2. Repeat at least three matches without zoning; verify no stale target, proxy, spell clone, lifecycle state, reward claim, or UI state leaks into the next match.
+3. 2–5 attacker matches, including one proxy that exercises the known per-proxy native-Start recovery/drop path; surviving proxies must continue. Force/observe complete proxy failure separately and confirm invalid/no reward/no competitive history.
+4. External hostile mob joins and attacks a defender; PvP must continue.
+5. External hostile/world actor attacks a PvP attacker; PvP must continue.
+6. Outside local Sim / party Sim joins combat; PvP must continue.
+7. Player-/Sim-owned pet participates, switches from PvP attacker to a legitimate world mob, then PvP ends; cleanup must preserve the world-mob target.
+8. Legitimate outside healer heals a defender and, where native game rules permit, another world actor; PvP must continue and no protected-target false positive should occur.
+9. Offensive AoE/PBAE hits an ordinary combat-capable outside actor; native combat may expand and PvP must continue.
+10. Same AoE reaches a proven protected vendor/`NeverAggro`/resource actor; only that target/effect is excluded and the match remains active.
+11. Friendly combat-capable guard/healer and an invulnerable-but-hostile/phase actor: verify neither is excluded solely by friendly faction or invulnerability.
+12. Player projectile with no resolvable source actor: opponent hit remains legal, same-side defender hit is rejected.
+13. Normal player defeat: native death/respawn consequences occur; result is a loss, never a technical failure or reward.
+14. Proxy-team defeat: result is a win only after all active attackers are defeated; reward is granted at most once.
+15. Flee and low-health retreat: classified competitively as escape/retreat according to existing record rules, with no victory reward.
+16. Inject/observe `fight_state_failed` / `runtime_invalid` / native-nav complete failure: no winner, XP, gold, win credit, or history credit.
+17. Scene transition during pending offer, countdown, and active combat: all owned proxy/spell/UI/target state tears down without touching unrelated world combat ownership.
+18. Hot-disable/reload through Lunaris during pending/countdown/active states: no stale Harmony state, event subscription, panel, coroutine-owned mod state, or temporary actor remains.
+19. COOP remote human/networked Sim present before offer acceptance, connecting during countdown, and appearing during active combat: local PvP fails closed as noncompetitive and never mutates the network-owned actor.
+20. Retained-uGUI challenge/fight/failure state and repeated open/close/reload behavior remain clear while all combat tests above run.
+
+## Remaining uncertainty
+
+- Static metadata proves method presence/overload shape, not that every Harmony prefix/finalizer sees the exact semantic event expected at runtime. Live capture remains mandatory after game updates.
+- World-combat expansion deliberately allows outside actors to help kill PvP attackers. Current reward semantics are **match victory**, not a separate kill-credit/contribution system. The bounded balance/per-proxy diagnostics measure combat outcome, but do not yet assign a percentage of victory credit to each outside world actor. Do not silently add a new kill-credit rule without a product decision and live evidence.
+- COOP remains intentionally unsupported for active local PvP. The pass improves exclusion/teardown; it does not implement networked PvP.
+- Native Start/NavMesh/class-specific behavior is deliberately owned by Erenshor. The next meaningful confidence increase must come from focused live QA, not more speculative replacement AI logic.
+
+## Assessment
+
+The source is now internally consistent with the world-combat design and has materially stronger failure/result/authority/cleanup boundaries. On the evidence available here, the appropriate next step is **focused live QA**, not another broad architectural rewrite. This is not a release-readiness claim until the C# suite/build and the live matrix above are completed.

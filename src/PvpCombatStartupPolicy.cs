@@ -26,12 +26,22 @@ namespace ErenshorPvP
 
         internal static bool IsTechnicalFailure(string reason)
         {
-            return string.Equals(reason ?? string.Empty, TechnicalFailureAiInactive, StringComparison.Ordinal);
+            string value = (reason ?? string.Empty).Trim();
+            return value.StartsWith("technical_failure_", StringComparison.Ordinal) ||
+                string.Equals(value, "fight_state_failed", StringComparison.Ordinal) ||
+                string.Equals(value, "runtime_invalid", StringComparison.Ordinal) ||
+                string.Equals(value, "start_failed", StringComparison.Ordinal) ||
+                string.Equals(value, "all_proxies_failed_start", StringComparison.Ordinal) ||
+                string.Equals(value, "native_nav_failed", StringComparison.Ordinal);
         }
 
         internal static bool ShouldRecordCompetitiveResult(string reason)
         {
-            return !IsTechnicalFailure(reason);
+            string value = (reason ?? string.Empty).Trim();
+            return string.Equals(value, "proxy_death", StringComparison.Ordinal) ||
+                string.Equals(value, "player_death", StringComparison.Ordinal) ||
+                string.Equals(value, "player_fled", StringComparison.Ordinal) ||
+                string.Equals(value, "retreat", StringComparison.Ordinal);
         }
 
         internal static bool CanGrantVictoryReward(string reason, bool winnerPresent)

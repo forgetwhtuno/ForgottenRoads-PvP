@@ -7,13 +7,18 @@ namespace ErenshorPvP
 {
     internal static class PvpCompatibility
     {
+        private static int _networkAssemblyCount = -1;
+        private static Type _networkedPlayerType;
+        private static Type _networkedSimType;
+
         internal static bool IsCoopSession()
         {
             try
             {
-                Type networked = FindType("NetworkedPlayer");
-                if (networked == null) return false;
-                return UnityEngine.Object.FindObjectsOfType(networked).Length > 0;
+                ResolveNetworkTypes(true);
+                if (_networkedPlayerType != null && UnityEngine.Object.FindObjectsOfType(_networkedPlayerType).Length > 0) return true;
+                if (_networkedSimType != null && UnityEngine.Object.FindObjectsOfType(_networkedSimType).Length > 0) return true;
+                return false;
             }
             catch { return true; }
         }
@@ -32,14 +37,25 @@ namespace ErenshorPvP
         internal static bool IsRemoteHuman(SimPlayer sim)
         {
             if (sim == null) return true;
-            try
-            {
-                Type networked = FindType("NetworkedPlayer");
-                if (networked != null && sim.GetComponent(networked) != null) return true;
-                Type networkedSim = FindType("NetworkedSim");
-                if (networkedSim != null && sim.GetComponent(networkedSim) != null) return true;
-            }
+            try { return HasNetworkComponent(sim, true, false); }
             catch { return true; }
+        }
+
+        // Network ownership is an authority boundary, not a world-combat hostility decision.
+        // Current Erenshor COOP exposes namespaced NetworkedPlayer / NetworkedSim components; PvP
+        // protects either from local proxy mutation/aggro while still allowing ordinary local Sims.
+        internal static bool IsNetworkOwnedActor(Component actor)
+        {
+            if (actor == null) return false;
+            try { return HasNetworkComponent(actor, true, true); }
+            catch { return true; }
+        }
+
+        private static bool HasNetworkComponent(Component component, bool includePlayers, bool includeSims)
+        {
+            ResolveNetworkTypes(false);
+            if (includePlayers && _networkedPlayerType != null && component.GetComponent(_networkedPlayerType) != null) return true;
+            if (includeSims && _networkedSimType != null && component.GetComponent(_networkedSimType) != null) return true;
             return false;
         }
 
@@ -96,6 +112,43 @@ namespace ErenshorPvP
             value = 0; object raw = ReadMember(instance, name);
             if (raw == null) return false;
             try { value = Convert.ToInt32(raw); return true; } catch { return false; }
+        }
+
+        private static void ResolveNetworkTypes(bool refreshAssemblySet)
+        {
+            // Damage/aggro hooks are hot paths. Once the types are resolved, do not allocate an
+            // AppDomain assembly snapshot on every effect. The low-frequency session check refreshes
+            // the cache so a COOP plugin loaded after PvP is still discovered within one authority poll.
+            if (!refreshAssemblySet && _networkAssemblyCount >= 0) return;
+            Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            if (_networkAssemblyCount == assemblies.Length) return;
+            _networkAssemblyCount = assemblies.Length;
+            _networkedPlayerType = FindType("ErenshorCoop.NetworkedPlayer", "NetworkedPlayer", assemblies);
+            _networkedSimType = FindType("ErenshorCoop.NetworkedSim", "NetworkedSim", assemblies);
+        }
+
+        private static Type FindType(string fullName, string shortName, Assembly[] assemblies)
+        {
+            foreach (Assembly assembly in assemblies)
+            {
+                try
+                {
+                    Type exact = assembly.GetType(fullName, false);
+                    if (exact != null) return exact;
+                    string assemblyName = assembly.GetName().Name ?? string.Empty;
+                    if (assemblyName.IndexOf("ErenshorCoop", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    foreach (Type type in assembly.GetTypes())
+                        if (type != null && string.Equals(type.Name, shortName, StringComparison.Ordinal)) return type;
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    if (ex.Types == null) continue;
+                    foreach (Type type in ex.Types)
+                        if (type != null && string.Equals(type.Name, shortName, StringComparison.Ordinal)) return type;
+                }
+                catch { }
+            }
+            return null;
         }
 
         private static Type FindType(string name)

@@ -49,10 +49,37 @@ namespace ErenshorPvP
             return registeredTemporaryProxy && !maintenanceStateValid;
         }
 
-        internal static bool RewardBoundaryPasses(bool xpReadableAndZero, bool bossXpZero, bool bonusXpZero,
-            bool questNull, bool factionEmpty, bool lootGoldZero, bool lootDisabled)
+        internal static bool RewardBoundaryPasses(bool xpReadableAndZero, bool neverTrack, bool questNull,
+            bool factionEmpty, bool lootGoldZero, bool lootDropsEmpty, bool lootDisabled,
+            bool achievementCreditClear)
         {
-            return xpReadableAndZero && bossXpZero && bonusXpZero && questNull && factionEmpty && lootGoldZero && lootDisabled;
+            return xpReadableAndZero && neverTrack && questNull && factionEmpty &&
+                   lootGoldZero && lootDropsEmpty && lootDisabled && achievementCreditClear;
+        }
+
+        // Borrowed-reward safety is factual state on the current Character/LootTable.  NPC and
+        // Character Start are intentionally deferred until GO, so they are useful post-GO
+        // diagnostics but must never make the same unchanged pre-GO proof disagree at countdown.
+        internal static bool RewardSuppressionProofPasses(bool boundarySuppressed, bool proofVerified,
+            bool actorIdentityMatches, bool lootIdentityMatches)
+        {
+            return boundarySuppressed && proofVerified && actorIdentityMatches && lootIdentityMatches;
+        }
+
+        internal static bool CountdownHoldAccepts(bool preparationAccepted, bool boundarySuppressed,
+            bool proofVerified, bool actorIdentityMatches, bool lootIdentityMatches)
+        {
+            // The same unmodified proof must be accepted by readiness and countdown hold. A later
+            // current-state loss still fails closed through the authoritative proof above.
+            return preparationAccepted && RewardSuppressionProofPasses(boundarySuppressed, proofVerified,
+                actorIdentityMatches, lootIdentityMatches);
+        }
+
+        internal static bool RewardBoundaryPasses(bool xpReadableAndZero, bool neverTrack, bool questNull,
+            bool factionEmpty, bool lootGoldZero, bool lootDisabled)
+        {
+            return RewardBoundaryPasses(xpReadableAndZero, neverTrack, questNull, factionEmpty,
+                lootGoldZero, true, lootDisabled, true);
         }
 
         internal static string ZeroHealingAssessment(int healCapableAttackers, int healChecks, int spellStarts, long healingDone)
@@ -62,6 +89,25 @@ namespace ErenshorPvP
             if (healChecks <= 0) return "heal_ai_not_evaluated";
             if (spellStarts <= 0) return "heal_capable_but_no_cast_started";
             return "heal_capable_casting_observed_no_effective_heal";
+        }
+
+        // 0.5.11 observability: a single proxy-level answer to "did this proxy actually evaluate
+        // and use its abilities", built from telemetry that already exists per proxy (admitted
+        // spell counts, CheckHeals/DoAttackSkill/DoAttackSpell decisions, StartSpell-family starts,
+        // and effective damage/healing outcomes). A proxy with zero admitted class spells is a real,
+        // expected outcome (e.g. a pure-melee loadout) and must report as such rather than as a
+        // failure. Each return value is a strictly later stage than the one before it, so "loaded
+        // but never evaluated" is always distinguishable from "evaluated but never cast", which is
+        // itself distinguishable from "cast but no measurable outcome landed".
+        internal static string ProxyAbilityUseAssessment(int offensiveSpellsLoaded, int healSpellsLoaded,
+            int healChecks, int attackSkillDecisions, int attackSpellDecisions, int spellStarts,
+            long damageDealt, long healingDone)
+        {
+            if (offensiveSpellsLoaded <= 0 && healSpellsLoaded <= 0) return "no_class_abilities_loaded";
+            if (attackSkillDecisions <= 0 && attackSpellDecisions <= 0 && healChecks <= 0) return "ability_ai_not_evaluated";
+            if (spellStarts <= 0) return "ability_evaluated_no_cast_started";
+            if (damageDealt <= 0 && healingDone <= 0) return "cast_started_no_effective_outcome";
+            return "ability_use_confirmed";
         }
     }
 }

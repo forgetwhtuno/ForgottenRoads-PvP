@@ -28,7 +28,9 @@ namespace ErenshorPvP
 
         internal static bool PursuitSatisfied(bool needsPursuit, bool destinationAttempted, bool movementObserved)
         {
-            return !needsPursuit || destinationAttempted || movementObserved;
+            // A destination request is admission evidence, not execution evidence. When pursuit is
+            // required, actual root displacement is the first bounded proof that native navigation executed.
+            return !needsPursuit || movementObserved;
         }
     }
 }

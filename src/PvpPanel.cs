@@ -471,6 +471,8 @@ namespace ErenshorPvP
                         PvpRosterEntry r = roster[i];
                         sb.Append(r.Name).Append(" L").Append(r.Level).Append(' ').Append(r.ClassName).Append(" — ").Append(r.HealthText).Append('\n');
                     }
+                    string combatStats = PvpCombatContainment.LiveCombatPresentationSummary();
+                    if (!string.IsNullOrEmpty(combatStats)) sb.Append('\n').Append(combatStats).Append('\n');
                     _fightText.text = sb.ToString().TrimEnd();
                 }
             }

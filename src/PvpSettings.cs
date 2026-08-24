@@ -37,11 +37,14 @@ namespace ErenshorPvP
         [Config("OfferCooldownMinutes", "PvP", "Global cooldown between incoming arranged offers or ambushes, clamped to 2-60 minutes.")]
         public int OfferCooldownMinutes = 12;
 
-        [Config("Enabled", "Ambush", "Allow rare non-consensual attacks while the main PvP toggle is on. These never prompt; they simply begin. Protected zones and the scene allowlist are the only limits.")]
+        [Config("Enabled", "Ambush", "Allow rare non-consensual attacks while the main PvP toggle is on. Ordinary ready gameplay scenes are eligible; protected areas and explicit per-zone disables are excluded.")]
         public bool AmbushEnabled = true;
 
-        [Config("Zones", "Ambush", "Exact scene allowlist for wild ambushes. Empty means no automatic ambushes.")]
-        public string AmbushZones = "Faerie's Brake, Hidden Hills, Bonepits, Krakengard";
+        [Config("Zones", "Ambush", "Legacy explicit-enabled scene list retained for existing profiles. Wild ambush eligibility no longer depends on enumerating every adventure scene.")]
+        public string AmbushZones = "";
+
+        [Config("DisabledZones", "Ambush", "Exact per-scene wild-ambush disables set by /epvp ambushhere off. Hard protected and non-gameplay scenes remain denied independently.")]
+        public string AmbushDisabledZones = "";
 
         [Config("MinimumMinutes", "Ambush", "Minimum minutes between natural ambush opportunities, clamped to 8-120.")]
         public int AmbushMinimumMinutes = 15;
@@ -52,8 +55,8 @@ namespace ErenshorPvP
         [Config("OpportunityChancePercent", "Ambush", "Chance that an eligible ambush opportunity becomes an ambush (5-100). Failed opportunities reschedule the full interval.")]
         public int AmbushOpportunityChancePercent = 50;
 
-        [Config("ProtectedZones", "PvP", "Protected scene names. Matching ignores spaces and punctuation.")]
-        public string ProtectedZones = "Port Azure, Stowaway's Step, Island Tomb, Tutorial, Character Select";
+        [Config("ProtectedZones", "PvP", "Additional protected scene names. Built-in hard protection covers Azure/Port Azure, Stowaway/Stowaway's Step, and Tutorial/Island Tomb.")]
+        public string ProtectedZones = "Azure, Stowaway, Tutorial";
 
         [Config("HighRiskZones", "PvP", "Exact scene names using the wider level range.")]
         public string HighRiskZones = "";

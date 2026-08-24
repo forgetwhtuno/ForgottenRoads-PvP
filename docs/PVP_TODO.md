@@ -50,9 +50,9 @@ Implemented in the current source, but still needs live verification:
 - [ ] Confirm player and party-Sim pets report under `defender_pets`, damage only PvP attackers, can receive attacker damage, and release aggro on cleanup. Ownership admission and containment policy are implemented and self-tested.
 - [ ] Confirm attackers can retreat/disengage at low health and that retreat grants no victory reward.
 - [ ] Confirm an attacker defeat is registered only after every attacker in the team is dead.
-- [ ] Confirm unrelated NPCs cannot join, damage, or receive accidental PvP targeting.
-- [x] Preserve ordinary player/party combat against world NPCs while keeping proxies out of that combat: a world hit is allowed and ends PvP, proxy/outside cross-targeting is blocked, and verified outside aggression cancels safely.
-- [ ] Live-verify clear-area placement: 10m player clearance, 8m per-spawn clearance, complete NavMesh paths, 11m formation, party/pet exclusions, and a useful forced-start refusal near an NPC.
+- [ ] Live-confirm ordinary combat-capable third parties **can** join naturally: local Sims, party Sims, owned pets, hostile mobs, existing enemies, and legitimate outside healers may attack/heal/take AoE without cancelling PvP.
+- [x] Preserve MMO world-combat expansion in source policy: ordinary third-party aggro/damage/healing/AoE is admitted and does not terminate PvP; only same-team invalid interactions, proven protected neutral/noncombat targets, and network-authority actors are blocked.
+- [ ] Live-verify placement without recreating an arena: protected neutral/noncombat actors retain 10m player / 8m spawn clearance, ordinary combat-capable world actors use only the small physical-overlap buffer, all proxies have complete NavMesh paths, and the 11m formation remains usable in real camps.
 - [x] Confirm encounter-local fallback equipment resolves real native items: live level-12 Reaver evidence found 105 eligible items, selected 10, and passed the consolidated two-proxy equipment count.
 - [ ] Confirm scene transitions, death/respawn, manual despawn, and shutdown leave no proxy, spell clone, target, or stale UI state.
 
@@ -92,7 +92,7 @@ Implemented in the current source, but still needs live verification:
 - [ ] Confirm Deep Sims reactions remain short, grounded, and social; no LLM output controls movement, targeting, attacks, spells, or rewards.
 - [ ] Confirm the mod remains functional when Deep Sims is absent.
 - [ ] Confirm Practice Duels and PvP cannot claim the same local Sim as an opponent.
-- [ ] Confirm COOP remains fail-closed and never creates duplicate host/client PvP directors.
+- [ ] Live-confirm COOP remains fail-closed: a namespaced `NetworkedPlayer`/`NetworkedSim` present before acceptance, appearing during countdown, or appearing during active combat never becomes a locally owned PvP participant and produces no reward/history credit.
 - [ ] If COOP PvP is eventually desired, design and verify a host-authoritative network protocol before enabling it.
 
 ## 7. Release and maintenance

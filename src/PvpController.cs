@@ -19,6 +19,7 @@ namespace ErenshorPvP
         private static PvpConfigEntry<int> _offerCooldownMinutes;
         private static PvpConfigEntry<bool> _ambushEnabled;
         private static PvpConfigEntry<string> _ambushZones;
+        private static PvpConfigEntry<string> _ambushDisabledZones;
         private static PvpConfigEntry<int> _ambushMinimumMinutes;
         private static PvpConfigEntry<int> _ambushMaximumMinutes;
         private static PvpConfigEntry<int> _ambushChancePercent;
@@ -38,6 +39,10 @@ namespace ErenshorPvP
         private static float _nextScan;
         private static float _nextOffer;
         private static float _nextAmbush;
+        private static float _nextAuthorityCheck;
+        private static float _lastNativeCombatAt = -1f;
+        private static PvpPreOpportunityDecision _lastPreOpportunityDecision = PvpPreOpportunityDecision.Allowed;
+        private static float _lastPreOpportunityDiagnosticAt;
         private static string _pendingName;
         private static PvpTeamPlan _pendingTeam;
         private static string _pendingMatchId;
@@ -49,6 +54,11 @@ namespace ErenshorPvP
         private static int _matchCountdownValue;
         private static float _matchCountdownNextAt;
         private static string _countdownMatchId = string.Empty;
+        private static string _preparationMatchId = string.Empty;
+        private static PvpEncounterMode _preparationMode = PvpEncounterMode.Arranged;
+        private static float _preparationDeadline;
+        private static bool _preparationAnnounced;
+        private const float PreparationTimeoutSeconds = 12f;
 
         internal static bool Enabled { get { return _enabled != null && _enabled.Value; } }
         internal static bool ShowLauncherPreference { get { return _showQuickToggle == null || _showQuickToggle.Value; } }
@@ -62,6 +72,7 @@ namespace ErenshorPvP
             _offerCooldownMinutes = new PvpConfigEntry<int>(() => settings.OfferCooldownMinutes, v => settings.OfferCooldownMinutes = v);
             _ambushEnabled = new PvpConfigEntry<bool>(() => settings.AmbushEnabled, v => settings.AmbushEnabled = v);
             _ambushZones = new PvpConfigEntry<string>(() => settings.AmbushZones, v => settings.AmbushZones = v);
+            _ambushDisabledZones = new PvpConfigEntry<string>(() => settings.AmbushDisabledZones, v => settings.AmbushDisabledZones = v);
             _ambushMinimumMinutes = new PvpConfigEntry<int>(() => settings.AmbushMinimumMinutes, v => settings.AmbushMinimumMinutes = v);
             _ambushMaximumMinutes = new PvpConfigEntry<int>(() => settings.AmbushMaximumMinutes, v => settings.AmbushMaximumMinutes = v);
             _ambushChancePercent = new PvpConfigEntry<int>(() => settings.AmbushOpportunityChancePercent, v => settings.AmbushOpportunityChancePercent = v);
@@ -81,6 +92,7 @@ namespace ErenshorPvP
             _lifecycle = new PvpMatchLifecyclePolicy(Enabled);
             PvpPanel.ConfigurePosition(_panelNormalizedX.Value, _panelNormalizedY.Value, _launcherNormalizedX.Value, _launcherNormalizedY.Value, PersistPanelPosition, PersistLauncherPosition);
             _nextScan = Time.unscaledTime + 12f;
+            _nextAuthorityCheck = Time.unscaledTime;
             ScheduleNextAmbush(Time.unscaledTime);
         }
 
@@ -133,13 +145,27 @@ namespace ErenshorPvP
                 if (PvpTemporaryCloneFactory.HasActiveTeam) PvpTemporaryCloneFactory.Despawn("pvp_disabled");
                 return;
             }
+            if (PvpTemporaryCloneFactory.HasActiveTeam && now >= _nextAuthorityCheck)
+            {
+                _nextAuthorityCheck = now + 1f;
+                if (PvpCompatibility.IsCoopSession())
+                {
+                    Say("[Erenshor PvP] Encounter cancelled: COOP/network authority became active.");
+                    PvpTemporaryCloneFactory.Despawn("coop_session_active");
+                    return;
+                }
+            }
             PvpTemporaryCloneFactory.Tick();
             if (_lifecycle.State == PvpMatchLifecycleState.Countdown)
             {
                 TickMatchCountdown(now);
                 return;
             }
-            if (_lifecycle.State == PvpMatchLifecycleState.Preparing) return;
+            if (_lifecycle.State == PvpMatchLifecycleState.Preparing)
+            {
+                TickMatchPreparation(now);
+                return;
+            }
             if (HasPending && now >= _pendingExpires) ClearPending();
             if (HasPending || now < _nextScan || now < _nextOffer) return;
             _nextScan = now + 12f;
@@ -170,6 +196,7 @@ namespace ErenshorPvP
             if (mode == PvpEncounterMode.Arranged && !ArrangedEnabled)
             { Diagnostic("scan arranged_disabled"); if (forced) Say("[Erenshor PvP] Arranged challenges are switched off."); return; }
             if (IsZoning()) { Diagnostic("scan zoning scene=" + scene); return; }
+            if (!EvaluatePreOpportunityContext(mode, mode == PvpEncounterMode.Ambush ? "wild" : "arranged")) return;
 
             PvpTeamPlan team;
             PvpEligibilityDecision decision;
@@ -239,6 +266,7 @@ namespace ErenshorPvP
             else if (option.Equals("verify", StringComparison.OrdinalIgnoreCase))
             { Say(PvpTemporaryCloneFactory.VerifyRuntime() + " " + PvpCombatContainment.VerifyRuntime()); return true; }
             else if (option.Equals("diagnose", StringComparison.OrdinalIgnoreCase)) { Say(Diagnostics()); return true; }
+            else if (option.StartsWith("itemdiag", StringComparison.OrdinalIgnoreCase)) { Say(PvpItemDbVisualObserver.Inspect(option)); return true; }
             else if (option.Equals("ambushzones", StringComparison.OrdinalIgnoreCase)) { Say(AmbushZonesText()); return true; }
             else if (option.StartsWith("ambushhere", StringComparison.OrdinalIgnoreCase))
             { Say(SetAmbushHere(option)); return true; }
@@ -282,7 +310,9 @@ namespace ErenshorPvP
         internal static string CurrentScene { get { try { return SceneManager.GetActiveScene().name ?? string.Empty; } catch { return string.Empty; } } }
         internal static bool IsProtectedHere { get { return IsProtectedScene(CurrentScene); } }
         internal static bool AmbushAllowedHere { get { return AmbushAllowed(CurrentScene); } }
-        internal static bool AmbushZoneListedHere { get { return IsListed(CurrentScene, _ambushZones == null ? string.Empty : _ambushZones.Value); } }
+        // Retained name for the panel API: it now means effectively enabled here, not membership
+        // in the retired adventure-scene allowlist.
+        internal static bool AmbushZoneListedHere { get { return AmbushAllowedHere; } }
         internal static int LevelRangeHere { get { return RangeForScene(CurrentScene); } }
         internal static int DefenderCount { get { return CurrentDefenderCount(); } }
         internal static int DefenderAverageLevel { get { int count; int level; CurrentDefenderParty(out count, out level); return level; } }
@@ -404,6 +434,8 @@ namespace ErenshorPvP
             if (IsProtectedScene(scene)) return "blocked:protected_zone";
             if (!AmbushAllowed(scene)) return "blocked:ambush_not_allowed_here";
             if (IsZoning()) return "blocked:zoning";
+            if (!EvaluatePreOpportunityContext(PvpEncounterMode.Ambush, "nemesis"))
+                return "blocked:" + PvpPreOpportunityPolicy.Token(_lastPreOpportunityDecision);
 
             PvpTeamPlan team; PvpEligibilityDecision decision;
             if (!TrySelectOffMap(-1, leader, out team, out decision)) return "blocked:" + PvpPolicy.Token(decision);
@@ -472,9 +504,11 @@ namespace ErenshorPvP
 
         internal static string Status()
         {
-            return "[Erenshor PvP] " + (Enabled ? "ON" : "OFF") + "; zone=" + SceneManager.GetActiveScene().name +
-                "; protected=" + IsProtectedScene(SceneManager.GetActiveScene().name) + "; coop_blocked=" + PvpCompatibility.IsCoopSession() +
-                "; ambush_allowed=" + AmbushAllowed(SceneManager.GetActiveScene().name) +
+            string scene = SceneManager.GetActiveScene().name;
+            PvpWildAmbushZoneDecision zone = AmbushDecision(scene);
+            return "[Erenshor PvP] " + (Enabled ? "ON" : "OFF") + "; zone=" + scene +
+                "; playable=" + zone.Playable + "; protected=" + zone.Protected + "; coop_blocked=" + PvpCompatibility.IsCoopSession() +
+                "; ambush_allowed=" + zone.Allowed + "; eligibility_source=" + zone.Source +
                 "; " + PvpRewardService.Describe() + "; " + PvpRecordService.Describe();
         }
 
@@ -492,12 +526,13 @@ namespace ErenshorPvP
         internal static string SelfTest()
         {
             string eligibility = PvpPolicy.RunSelfTests();
-            return eligibility.StartsWith("PASS", StringComparison.Ordinal) ? eligibility + "; " + ErenshorPvpApi.RunSelfTests() + "; " + PvpMatchmakingPolicy.RunSelfTests() + "; " + PvpTeamPlanner.RunSelfTests() + "; " + PvpCombatContainment.RunSelfTests() + "; " + PvpTemporaryCloneFactory.RunSpawnPolicySelfTests() + "; " + PvpEncounterFlavorFactory.RunSelfTests() + "; " + PvpRewardService.RunSelfTests() + "; " + PvpPanel.RunSelfTests() : eligibility;
+            return eligibility.StartsWith("PASS", StringComparison.Ordinal) ? eligibility + "; " + PvpPreOpportunityPolicy.RunSelfTests() + "; " + ErenshorPvpApi.RunSelfTests() + "; " + PvpMatchmakingPolicy.RunSelfTests() + "; " + PvpTeamPlanner.RunSelfTests() + "; " + PvpCombatContainment.RunSelfTests() + "; " + PvpNativeCombatLoopPolicy.RunSelfTests() + "; " + PvpSpellExecutionPolicy.RunSelfTests() + "; " + PvpNativeHealThresholdProbe.RunSelfTest() + "; " + PvpSpellTargetPolicy.RunSelfTests() + "; " + PvpTemporaryCloneFactory.RunSpawnPolicySelfTests() + "; " + PvpEncounterFlavorFactory.RunSelfTests() + "; " + PvpRewardService.RunSelfTests() + "; " + PvpPanel.RunSelfTests() : eligibility;
         }
 
         private static string Diagnostics()
         {
             string scene = SceneManager.GetActiveScene().name;
+            PvpWildAmbushZoneDecision zone = AmbushDecision(scene);
             int offMap = 0; int sameZone = 0;
             string spawnReason; bool clearSpawn = PvpTemporaryCloneFactory.CanSpawnClearTeam(5, out spawnReason);
             try
@@ -513,10 +548,13 @@ namespace ErenshorPvP
                     }
             }
             catch { }
-            return "[Erenshor PvP] diagnose ready=" + IsGameplayReady() + "; scene=" + scene + "; protected=" + IsProtectedScene(scene) +
-                "; ambush_allowed=" + AmbushAllowed(scene) + "; next_ambush_seconds=" + Math.Max(0, Mathf.RoundToInt(_nextAmbush - Time.unscaledTime)) +
+            return "[Erenshor PvP] diagnose ready=" + IsGameplayReady() + "; scene=" + scene + "; playable=" + zone.Playable +
+                "; zone_protected=" + zone.Protected + "; coop_blocked=" + PvpCompatibility.IsCoopSession() +
+                "; ambush_allowed=" + zone.Allowed + "; eligibility_source=" + zone.Source +
+                "; next_ambush_seconds=" + Math.Max(0, Mathf.RoundToInt(_nextAmbush - Time.unscaledTime)) +
+                "; ambush_chance_percent=" + AmbushChancePercent +
                 "; hunt_camp=" + PvpCompatibility.IsVerifiedHuntCampActive() +
-                "; zoning=" + IsZoning() + "; coop=" + PvpCompatibility.IsCoopSession() + "; defenders=" + CurrentDefenderCount() +
+                "; zoning=" + IsZoning() + "; defenders=" + CurrentDefenderCount() +
                 "; defender_avg_level=" + DefenderAverageLevel + "; phase=" + _lifecycle.State.ToString().ToLowerInvariant() +
                 "; clear_spawn_5=" + clearSpawn + (clearSpawn ? string.Empty : "; clear_spawn_reason=" + spawnReason) +
                 "; off_map_profiles=" + offMap + "; same_zone_profiles=" + sameZone + "; " + PvpTemporaryCloneFactory.DiagnosticStatus();
@@ -530,11 +568,12 @@ namespace ErenshorPvP
             // A scene transition never resumes the interrupted encounter or immediately rolls a
             // replacement. A manual force request remains available after the destination loads.
             _nextScan = Time.unscaledTime + 300f;
+            _nextAuthorityCheck = Time.unscaledTime;
             if (_nextOffer < Time.unscaledTime + 300f) _nextOffer = Time.unscaledTime + 300f;
             if (_nextAmbush < Time.unscaledTime + 300f) _nextAmbush = Time.unscaledTime + 300f;
         }
         // Hot unload releases retained UI, drag ownership, proxy state, and optional bridge state.
-        internal static void Shutdown() { ClearPending(); ResetMatchCountdown(); PvpTemporaryCloneFactory.Shutdown(); _open = false; PvpPanel.Dispose(); _pendingExternalOpen = false; _pendingExternalClose = false; SuiteBridgeRegistered = false; SuiteUiPolicy.Reset(); }
+        internal static void Shutdown() { ClearPending(); ResetMatchPreparation(); ResetMatchCountdown(); PvpTemporaryCloneFactory.Shutdown(); _open = false; PvpPanel.Dispose(); _pendingExternalOpen = false; _pendingExternalClose = false; SuiteBridgeRegistered = false; SuiteUiPolicy.Reset(); }
 
         private static string Plan(string option)
         {
@@ -580,7 +619,7 @@ namespace ErenshorPvP
         {
             return arranged
                 ? "You are always asked to Accept or Refuse before one starts."
-                : "These start without asking; protected zones and the scene allowlist are the only limits.";
+                : "These start without asking in ordinary ready gameplay scenes; protected areas and per-zone disables are excluded.";
         }
 
         private static string MasterHint()
@@ -590,7 +629,9 @@ namespace ErenshorPvP
 
         internal static string AmbushZonesText()
         {
-            return "[Erenshor PvP] Ambush zone allowlist: " + (_ambushZones == null || string.IsNullOrWhiteSpace(_ambushZones.Value) ? "none" : _ambushZones.Value);
+            string configured = _protectedZones == null || string.IsNullOrWhiteSpace(_protectedZones.Value) ? "none" : _protectedZones.Value;
+            string disabled = _ambushDisabledZones == null || string.IsNullOrWhiteSpace(_ambushDisabledZones.Value) ? "none" : _ambushDisabledZones.Value;
+            return "[Erenshor PvP] Wild Ambush Zone Policy: ordinary ready gameplay scenes are eligible by default; protected scenes are Azure/Port Azure, Stowaway/Stowaway's Step, Tutorial/Island Tomb plus configured [" + configured + "]; per-zone disabled [" + disabled + "].";
         }
 
         internal static string TeamText()
@@ -672,6 +713,12 @@ namespace ErenshorPvP
         internal static void Accept()
         {
             if (!HasPending) { ClearPending(); Say("[Erenshor PvP] That challenge expired."); return; }
+            if (!EvaluatePreOpportunityContext(PvpEncounterMode.Arranged, "arranged_accept"))
+            {
+                ClearPending(); ClosePanel();
+                Say("[Erenshor PvP] Challenge cancelled: world context is no longer safe (" + PvpPreOpportunityPolicy.Token(_lastPreOpportunityDecision) + ").");
+                return;
+            }
             string id = _pendingMatchId; string name = _pendingName; PvpTeamPlan team = _pendingTeam; PvpEncounterFlavor flavor = _pendingFlavor; ClearPending(); ClosePanel();
             Publish("pvp_accepted", id, name, SceneManager.GetActiveScene().name, "arranged", flavor == null ? "party_match" : flavor.Motive);
             StartEncounter(team, id, name, PvpEncounterMode.Arranged, flavor);
@@ -679,6 +726,15 @@ namespace ErenshorPvP
 
         private static void StartEncounter(PvpTeamPlan team, string id, string name, PvpEncounterMode mode, PvpEncounterFlavor flavor)
         {
+            // A remote player can join during the arranged challenge window. Revalidate authority at
+            // the mutation boundary rather than trusting the earlier offer-time snapshot.
+            if (PvpCompatibility.IsCoopSession())
+            {
+                PublishTerminalOnce("pvp_cancelled", id, name, SceneManager.GetActiveScene().name,
+                    mode.ToString().ToLowerInvariant(), "coop_session_active");
+                Say("[Erenshor PvP] Encounter cancelled: COOP/networked actors are active. Local PvP will not start.");
+                return;
+            }
             if (!_lifecycle.BeginSpawn(id))
             {
                 Say("[Erenshor PvP] Encounter cancelled: lifecycle was not ready.");
@@ -703,13 +759,62 @@ namespace ErenshorPvP
                 PvpTemporaryCloneFactory.Despawn("preparation_failed");
                 return;
             }
-            if (!_lifecycle.SpawnSucceeded())
+            _preparationMatchId = id ?? string.Empty;
+            _preparationMode = mode;
+            _preparationDeadline = Time.unscaledTime + PreparationTimeoutSeconds;
+            _preparationAnnounced = false;
+            PvpDiagnostics.Log("countdown_ready_barrier match=" + ShortMatch(_preparationMatchId) +
+                "; ready=false; timeout_seconds=" + PreparationTimeoutSeconds.ToString("0"));
+            if (mode == PvpEncounterMode.Arranged)
             {
-                PvpTemporaryCloneFactory.Despawn("countdown_state_failed");
+                Say("[Erenshor PvP] Preparing opponents...");
+                _preparationAnnounced = true;
+            }
+        }
+
+        private static void TickMatchPreparation(float now)
+        {
+            if (_lifecycle.State != PvpMatchLifecycleState.Preparing) return;
+            if (!PvpTemporaryCloneFactory.HasActiveTeam)
+            {
+                ResetMatchPreparation();
+                _lifecycle.BeginCleanup();
+                _lifecycle.CompleteCleanup(Enabled);
                 return;
             }
-            if (mode == PvpEncounterMode.Arranged) BeginMatchCountdown(id);
-            else ReleaseMatchAtGo(id, false); // Preserve wild-ambush immediacy; no visible 3-2-1 warning.
+            string holdReason;
+            if (!PvpTemporaryCloneFactory.MaintainPreparationHold(out holdReason))
+            {
+                PvpDiagnostics.Warning("proxy_preparation_hold_failed match=" + ShortMatch(_preparationMatchId) +
+                    "; reason=" + holdReason);
+                ResetMatchPreparation();
+                PvpTemporaryCloneFactory.Despawn("preparation_hold_failed");
+                return;
+            }
+            string readiness;
+            if (PvpTemporaryCloneFactory.AreAllProxiesReady(out readiness))
+            {
+                string matchId = _preparationMatchId;
+                PvpEncounterMode mode = _preparationMode;
+                PvpDiagnostics.Log("countdown_ready_barrier match=" + ShortMatch(matchId) +
+                    "; ready=true; native_start_pending=0; " + PvpTemporaryCloneFactory.PreparationReadinessSummary());
+                ResetMatchPreparation();
+                if (!_lifecycle.SpawnSucceeded())
+                {
+                    PvpTemporaryCloneFactory.Despawn("countdown_state_failed");
+                    return;
+                }
+                if (mode == PvpEncounterMode.Arranged) BeginMatchCountdown(matchId);
+                else ReleaseMatchAtGo(matchId, false);
+                return;
+            }
+            if (now < _preparationDeadline) return;
+            PvpDiagnostics.Warning("proxy_preparation_timeout match=" + ShortMatch(_preparationMatchId) +
+                "; readiness=" + PvpTemporaryCloneFactory.PreparationReadinessSummary());
+            if (_preparationMode == PvpEncounterMode.Arranged || _preparationAnnounced)
+                Say("[Erenshor PvP] Encounter cancelled: opponents did not finish native preparation safely.");
+            ResetMatchPreparation();
+            PvpTemporaryCloneFactory.Despawn("preparation_timeout");
         }
 
         private static void BeginMatchCountdown(string matchId)
@@ -736,6 +841,7 @@ namespace ErenshorPvP
             if (!PvpTemporaryCloneFactory.MaintainCountdownHold(out holdReason))
             {
                 PvpDiagnostics.Warning("countdown_hold_failed match=" + ShortMatch(_countdownMatchId) + "; reason=" + holdReason);
+                Say("[Erenshor PvP] Encounter cancelled: countdown safety check failed. Normal control restored.");
                 ResetMatchCountdown();
                 PvpTemporaryCloneFactory.Despawn("countdown_hold_failed");
                 return;
@@ -755,6 +861,22 @@ namespace ErenshorPvP
 
         private static void ReleaseMatchAtGo(string matchId, bool announceGo)
         {
+            // Revalidate again at GO: a remote actor can connect during the three-second countdown.
+            if (PvpCompatibility.IsCoopSession())
+            {
+                ResetMatchCountdown();
+                PvpTemporaryCloneFactory.Despawn("coop_session_active");
+                Say("[Erenshor PvP] Encounter cancelled: COOP/network authority became active before GO.");
+                return;
+            }
+            string readiness;
+            if (!PvpTemporaryCloneFactory.AreAllProxiesReadyForGo(out readiness))
+            {
+                PvpDiagnostics.Warning("match_go_blocked match=" + ShortMatch(matchId) + "; readiness=" + readiness);
+                ResetMatchCountdown();
+                PvpTemporaryCloneFactory.Despawn("go_readiness_lost");
+                return;
+            }
             if (!_lifecycle.Go())
             {
                 ResetMatchCountdown();
@@ -781,6 +903,14 @@ namespace ErenshorPvP
             _matchCountdownValue = 0;
             _matchCountdownNextAt = 0f;
             _countdownMatchId = string.Empty;
+        }
+
+        private static void ResetMatchPreparation()
+        {
+            _preparationMatchId = string.Empty;
+            _preparationDeadline = 0f;
+            _preparationMode = PvpEncounterMode.Arranged;
+            _preparationAnnounced = false;
         }
 
         private static string ShortMatch(string matchId)
@@ -823,6 +953,112 @@ namespace ErenshorPvP
             averageLevel = PvpMatchmakingPolicy.CalculateDefenderAverageLevel(playerLevel, partyLevels);
         }
 
+        // This is deliberately an admission snapshot, not a combat-containment policy. It runs
+        // only when an offer/request/accept is being considered, before roster selection or any
+        // player-facing effect. Once GO has happened, PvpCombatContainment remains authoritative.
+        private static bool EvaluatePreOpportunityContext(PvpEncounterMode mode, string source)
+        {
+            Character player = GameData.PlayerControl == null ? null : GameData.PlayerControl.Myself;
+            bool characterReady = IsGameplayReady() && IsAlive(player);
+            int playerLevel = player == null || player.MyStats == null ? 0 : Math.Max(0, player.MyStats.Level);
+            HashSet<Character> principals = new HashSet<Character>();
+            bool partyValid = characterReady;
+            if (player != null) principals.Add(player);
+            try
+            {
+                if (GameData.GroupMembers == null) partyValid = false;
+                else foreach (SimPlayerTracking tracking in GameData.GroupMembers)
+                {
+                    if (tracking == null) continue;
+                    Character member = tracking.MyAvatar == null || tracking.MyAvatar.MyStats == null ? null : tracking.MyAvatar.MyStats.Myself;
+                    if (member == null || !member.Alive) { partyValid = false; continue; }
+                    principals.Add(member);
+                }
+            }
+            catch { partyValid = false; }
+
+            bool nativeCombat = false;
+            int nearbyCount = 0;
+            float nearestDistance = -1f;
+            if (characterReady)
+            {
+                try
+                {
+                    foreach (NPC npc in UnityEngine.Object.FindObjectsOfType<NPC>())
+                    {
+                        if (npc == null || npc.gameObject == null || !npc.gameObject.activeInHierarchy || PvpTemporaryCloneFactory.IsTemporaryNpc(npc)) continue;
+                        Character actor = npc.GetComponent<Character>() ?? npc.GetComponentInParent<Character>();
+                        if (actor == null || PvpTemporaryCloneFactory.IsTemporaryActor(actor)) continue;
+                        Character target = null;
+                        try { target = npc.CurrentAggroTarget; } catch { }
+                        bool actorOwned = IsPrincipalOrOwned(actor, principals);
+                        bool targetOwned = IsPrincipalOrOwned(target, principals);
+                        if ((actorOwned && target != null) || targetOwned) nativeCombat = true;
+
+                        // Resource nodes/chests are static interaction objects rather than the
+                        // ordinary actor presence this opportunity gate is intended to avoid.
+                        if (actorOwned || IsResourceObject(npc)) continue;
+                        float distance = Vector3.Distance(actor.transform.position, player.transform.position);
+                        if (distance > PvpPreOpportunityPolicy.NearbyWorldActorRadius) continue;
+                        nearbyCount++;
+                        if (nearestDistance < 0f || distance < nearestDistance) nearestDistance = distance;
+                    }
+                }
+                catch { partyValid = false; }
+            }
+
+            float now = Time.unscaledTime;
+            if (nativeCombat) _lastNativeCombatAt = now;
+            bool recentCombat = !nativeCombat && _lastNativeCombatAt >= 0f &&
+                now - _lastNativeCombatAt < PvpPreOpportunityPolicy.RecentNativeCombatGraceSeconds;
+            bool restricted = IsProtectedScene(CurrentScene) || (mode == PvpEncounterMode.Ambush && !AmbushAllowed(CurrentScene));
+            PvpPreOpportunityDecision decision = PvpPreOpportunityPolicy.Evaluate(new PvpPreOpportunityInput
+            {
+                CharacterReady = characterReady, Zoning = IsZoning(), PvpEnabled = Enabled, PartyValid = partyValid,
+                NativeCombatActive = nativeCombat, RecentNativeCombat = recentCombat,
+                NearbyWorldActor = nearbyCount > 0, RestrictedZone = restricted, PlayerLevel = playerLevel
+            });
+            LogPreOpportunityDecision(source, decision, playerLevel, principals.Count, nearbyCount, nearestDistance,
+                _lastNativeCombatAt < 0f ? -1f : Math.Max(0f, now - _lastNativeCombatAt));
+            _lastPreOpportunityDecision = decision;
+            return decision == PvpPreOpportunityDecision.Allowed;
+        }
+
+        private static bool IsPrincipalOrOwned(Character actor, HashSet<Character> principals)
+        {
+            if (actor == null) return false;
+            if (principals.Contains(actor)) return true;
+            Character owner = null;
+            try { owner = actor.Master; } catch { return false; }
+            for (int depth = 0; owner != null && depth < 4; depth++)
+            {
+                if (principals.Contains(owner)) return true;
+                try { owner = owner.Master; } catch { return false; }
+            }
+            return false;
+        }
+
+        private static bool IsResourceObject(NPC npc)
+        {
+            try { return npc != null && (npc.MiningNode || npc.TreasureChest); }
+            catch { return false; }
+        }
+
+        private static void LogPreOpportunityDecision(string source, PvpPreOpportunityDecision decision, int playerLevel,
+            int partySize, int nearbyCount, float nearestDistance, float recentCombatAge)
+        {
+            float now = Time.unscaledTime;
+            if (decision == PvpPreOpportunityDecision.Allowed && decision == _lastPreOpportunityDecision) return;
+            if (decision == _lastPreOpportunityDecision && now < _lastPreOpportunityDiagnosticAt + 30f) return;
+            _lastPreOpportunityDiagnosticAt = now;
+            PvpDiagnostics.Log("preop_gate source=" + Normalize(source) + "; result=" +
+                (decision == PvpPreOpportunityDecision.Allowed ? "allowed" : "blocked") + "; reason=" +
+                PvpPreOpportunityPolicy.Token(decision) + "; playerLevel=" + playerLevel + "; partySize=" + partySize +
+                "; nearbyActorCount=" + nearbyCount + "; nearestActorDistance=" +
+                (nearestDistance < 0f ? "none" : nearestDistance.ToString("0.0")) + "; recentCombatAge=" +
+                (recentCombatAge < 0f ? "none" : recentCombatAge.ToString("0.0")));
+        }
+
         internal static void Refuse()
         {
             if (!string.IsNullOrEmpty(_pendingMatchId)) { MarkTeamCooldown(_pendingTeam, 120f); Publish("pvp_refused", _pendingMatchId, _pendingName, "", "refuse", ""); }
@@ -841,7 +1077,7 @@ namespace ErenshorPvP
         private static void ClearPending() { _lifecycle.ClearPending(); _pendingName = string.Empty; _pendingTeam = null; _pendingMatchId = string.Empty; _pendingExpires = 0f; _pendingFlavor = null; }
         // Called only after the factory has released combat target/navigation ownership and its
         // temporary actor/spell collections. The duplicate-safe policy tolerates nested cleanup.
-        internal static void EncounterCleaned() { ResetMatchCountdown(); _lifecycle.BeginCleanup(); _lifecycle.CompleteCleanup(Enabled); }
+        internal static void EncounterCleaned() { ResetMatchPreparation(); ResetMatchCountdown(); _lifecycle.BeginCleanup(); _lifecycle.CompleteCleanup(Enabled); }
         private static bool IsAlive(Character value) { try { return value != null && value.gameObject != null && value.gameObject.activeInHierarchy && value.Alive; } catch { return false; } }
         // An avatar can disappear briefly while the native manager pools or respawns it. CurScene
         // remains the authoritative location signal during that gap, so a same-zone Sim must not
@@ -867,7 +1103,15 @@ namespace ErenshorPvP
         }
         private static bool AmbushAllowed(string scene)
         {
-            return Enabled && _ambushEnabled != null && _ambushEnabled.Value && !IsProtectedScene(scene) && IsListed(scene, _ambushZones == null ? string.Empty : _ambushZones.Value);
+            return AmbushDecision(scene).Allowed;
+        }
+        private static PvpWildAmbushZoneDecision AmbushDecision(string scene)
+        {
+            return PvpWildAmbushZonePolicy.Evaluate(scene, IsGameplayReady(), IsZoning(), Enabled,
+                _ambushEnabled != null && _ambushEnabled.Value, PvpCompatibility.IsCoopSession(),
+                _protectedZones == null ? string.Empty : _protectedZones.Value,
+                _ambushDisabledZones == null ? string.Empty : _ambushDisabledZones.Value,
+                _ambushZones == null ? string.Empty : _ambushZones.Value);
         }
         private static void ScheduleNextAmbush(float now)
         {
@@ -887,25 +1131,18 @@ namespace ErenshorPvP
         internal static string SetAmbushHere(bool turnOn)
         {
             string scene = SceneManager.GetActiveScene().name;
+            if (PvpWildAmbushZonePolicy.IsHardNonGameplay(scene) || !IsGameplayReady() || IsZoning())
+                return "[Erenshor PvP] The current scene is not ready gameplay and cannot become an ambush zone.";
             if (turnOn && IsProtectedScene(scene)) return "[Erenshor PvP] " + scene + " is protected and cannot become an ambush zone.";
-            List<string> zones = new List<string>();
-            foreach (string item in (_ambushZones.Value ?? string.Empty).Split(','))
-                if (!string.IsNullOrWhiteSpace(item) && Normalize(item) != Normalize(scene)) zones.Add(item.Trim());
-            if (turnOn) zones.Add(scene);
-            _ambushZones.Value = string.Join(", ", zones.ToArray());
+            _ambushZones.Value = PvpWildAmbushZonePolicy.WithEntry(_ambushZones.Value, scene, turnOn);
+            _ambushDisabledZones.Value = PvpWildAmbushZonePolicy.WithEntry(_ambushDisabledZones.Value, scene, !turnOn);
             PersistSettings();
             if (turnOn && _nextAmbush < Time.unscaledTime + 300f) _nextAmbush = Time.unscaledTime + 300f;
             return "[Erenshor PvP] Wild ambushes " + (turnOn ? "allowed" : "disabled") + " in " + scene + ".";
         }
         private static bool IsProtectedScene(string scene)
         {
-            if (IsListed(scene, _protectedZones.Value)) return true;
-            string normalized = Normalize(scene);
-            if (normalized.Length == 0) return true;
-            // Hard safety floor for loading/character-select, tutorials, and city hubs.
-            return normalized.Contains("tutorial") || normalized.Contains("characterselect") ||
-                   normalized.Contains("portazure") || normalized.Contains("stowawaysstep") ||
-                   normalized.Contains("island") || normalized.Contains("city");
+            return PvpWildAmbushZonePolicy.IsProtected(scene, _protectedZones == null ? string.Empty : _protectedZones.Value);
         }
         private static string Normalize(string value)
         {
