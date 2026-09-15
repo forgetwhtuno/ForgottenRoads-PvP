@@ -8,3 +8,25 @@ refs/
 
 # Local build staging output from BUILD_AND_INSTALL.ps1.
 build-output/
+Diagnostics/
+**/Diagnostics/
+*.log
+.vs/
+.idea/
+.vscode/
+.env
+.env.*
+*.lpcfg
+*.pem
+*.key
+*.pfx
+*.p12
+*-handoff.zip
+*-changed-files.zip
+*-developer.zip
+ErenshorPvP-*.zip
+ForgottenRoads-PvP-*.zip
+**/CHANGED_FILES.txt
+**/HANDOFF.md
+**/SHA256SUMS.txt
+**/__pycache__/

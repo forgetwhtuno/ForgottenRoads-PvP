@@ -8,23 +8,23 @@ Current development line: 0.5.34 (`pvp-0.5.34-preop-world-context-r1`). A shared
 
 ### Temporary proxy startup boundary
 
-Version 0.5.14 keeps Unity/native `NPC.Start` as the owner of the cloned proxy lifecycle, but moves
-that natural initialization **before** the visible countdown. During `Preparing opponents...`, the
-NPC/CastSpell/NavMesh components stay enabled so Start and native maintenance can run, while PvP
-holds `NeverAggro`, clears hostile targets, stops navigation, and blocks temporary-proxy damage/effect
-edges. The countdown starts only after every admitted proxy passes the explicit readiness barrier
-(native Start, runtime invariant, stats/character/caster/spells, NavMesh first step/on-mesh, visual
-shell, reward suppression, one-time startup cooldown normalization, native attack-startup maintenance,
-and resolvable initial target). GO then releases aggression/navigation and seeds legal targets; it no
-longer begins expensive native initialization.
+Current PvP keeps Unity/native `NPC.Start` as the owner of each cloned proxy's navigation and behavior
+lifecycle, while deliberately deferring that natural callback until **GO**. During `Preparing
+opponents...` and the arranged 3/2/1 countdown, the clone root, `Character`, `CastSpell`, and
+`NavMeshAgent` are enabled for structural preparation, but `NPC` remains disabled. PvP holds
+`NeverAggro`, clears hostile targets, keeps navigation stopped, and blocks temporary-proxy
+damage/effect edges. `Character.Start` is allowed to finish before countdown so its native reward-state
+hydration can be rechecked; `NPC.Start` is not a pre-GO readiness requirement.
 
-The previous `nav=5/5` check proved only that coroutine handles had been assigned. The 0.5.9 bounded
-probe instead records native Start completion, native nav coroutine observation, `NPC.UpdateNav`
-entry, first successful `UpdateNav` completion, NavMeshAgent enabled/on-mesh state, destination/path
-evidence, movement evidence, and fault type. A proxy team whose native nav path completely faults
-fails closed as `technical_failure_ai_inactive` with no winner/reward/history credit. The existing
-proxy-owned `NamePlateTxt` / `NamePlateObject` invariant remains enforced so restoring native Start
-does not reintroduce the earlier `HandleNameTag` failure.
+The countdown starts only after every admitted proxy passes the explicit pre-GO barrier: runtime
+invariant, stats/character/caster/spells, structural NavMesh readiness, visual shell, verified reward
+suppression after `Character.Start`, and a resolvable initial target. At GO, PvP enables `NPC`, releases
+aggression/navigation, and seeds legal targets; Unity then owns the natural `NPC.Start` callback and
+native loop creation. A bounded post-GO probe records native Start completion, native nav coroutine and
+`NPC.UpdateNav` evidence, path/movement evidence, and faults. A proxy team whose native nav path
+completely faults fails closed as `technical_failure_ai_inactive` with no winner/reward/history credit.
+The proxy-owned `NamePlateTxt` / `NamePlateObject` invariant remains enforced so native Start does not
+reintroduce the earlier `HandleNameTag` failure.
 
 
 ## Status: native Lunaris migration candidate
