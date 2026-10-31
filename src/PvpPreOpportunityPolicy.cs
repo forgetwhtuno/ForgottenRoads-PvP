@@ -15,7 +15,8 @@ namespace ErenshorPvP
         NativeCombatActive,
         RecentNativeCombat,
         NearbyWorldActor,
-        RestrictedZone
+        RestrictedZone,
+        LowHealth
     }
 
     internal struct PvpPreOpportunityInput
@@ -28,6 +29,7 @@ namespace ErenshorPvP
         internal bool RecentNativeCombat;
         internal bool NearbyWorldActor;
         internal bool RestrictedZone;
+        internal bool HealthLow;
         internal int PlayerLevel;
     }
 
@@ -41,6 +43,10 @@ namespace ErenshorPvP
         internal const float RecentNativeCombatGraceSeconds = 20f;
         // Slightly beyond the 11m spawn formation, but not an empty-zone requirement.
         internal const float NearbyWorldActorRadius = 12f;
+        // DESIGN-SELECTED: an ambush has no Accept prompt, so it must not land on a player or
+        // party member who is still below half health from the previous fight. Arranged
+        // challenges keep their consent prompt and are not held by this floor.
+        internal const float AmbushMinimumHealthFraction = 0.5f;
 
         internal static PvpPreOpportunityDecision Evaluate(PvpPreOpportunityInput input)
         {
@@ -52,6 +58,7 @@ namespace ErenshorPvP
             if (input.PlayerLevel < MinimumPlayerLevel) return PvpPreOpportunityDecision.BelowMinimumLevel;
             if (input.NativeCombatActive) return PvpPreOpportunityDecision.NativeCombatActive;
             if (input.RecentNativeCombat) return PvpPreOpportunityDecision.RecentNativeCombat;
+            if (input.HealthLow) return PvpPreOpportunityDecision.LowHealth;
             if (input.NearbyWorldActor) return PvpPreOpportunityDecision.NearbyWorldActor;
             return PvpPreOpportunityDecision.Allowed;
         }
@@ -69,6 +76,7 @@ namespace ErenshorPvP
                 case PvpPreOpportunityDecision.RecentNativeCombat: return "recent_native_combat";
                 case PvpPreOpportunityDecision.NearbyWorldActor: return "nearby_world_actor";
                 case PvpPreOpportunityDecision.RestrictedZone: return "restricted_zone";
+                case PvpPreOpportunityDecision.LowHealth: return "low_health";
                 default: return "allowed";
             }
         }
@@ -84,7 +92,9 @@ namespace ErenshorPvP
             if (Evaluate(good) != PvpPreOpportunityDecision.NativeCombatActive) return "FAIL preop combat";
             good.NativeCombatActive = false; good.RecentNativeCombat = true;
             if (Evaluate(good) != PvpPreOpportunityDecision.RecentNativeCombat) return "FAIL preop grace";
-            good.RecentNativeCombat = false; good.NearbyWorldActor = true;
+            good.RecentNativeCombat = false; good.HealthLow = true;
+            if (Evaluate(good) != PvpPreOpportunityDecision.LowHealth) return "FAIL preop health";
+            good.HealthLow = false; good.NearbyWorldActor = true;
             if (Evaluate(good) != PvpPreOpportunityDecision.NearbyWorldActor) return "FAIL preop nearby";
             good.NearbyWorldActor = false; good.PartyValid = false;
             if (Evaluate(good) != PvpPreOpportunityDecision.PartyInvalid) return "FAIL preop party";

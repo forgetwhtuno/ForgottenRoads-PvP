@@ -345,7 +345,12 @@ internal static class PvpUiPolicyTests
         input.NativeCombatActive = false; input.RecentNativeCombat = true;
         Assert(PvpPreOpportunityPolicy.Evaluate(input) == PvpPreOpportunityDecision.RecentNativeCombat,
             "recent native-combat grace blocks immediate post-pull opportunity");
-        input.RecentNativeCombat = false; input.NearbyWorldActor = true;
+        input.RecentNativeCombat = false; input.HealthLow = true;
+        Assert(PvpPreOpportunityPolicy.Evaluate(input) == PvpPreOpportunityDecision.LowHealth,
+            "ambush health floor blocks a hurt player or party member");
+        Assert(PvpPreOpportunityPolicy.Token(PvpPreOpportunityDecision.LowHealth) == "low_health",
+            "low-health block has a stable diagnostic token");
+        input.HealthLow = false; input.NearbyWorldActor = true;
         Assert(PvpPreOpportunityPolicy.Evaluate(input) == PvpPreOpportunityDecision.NearbyWorldActor,
             "nearby hostile neutral or protected external actor blocks opportunity");
         input.NearbyWorldActor = false; input.PartyValid = false;

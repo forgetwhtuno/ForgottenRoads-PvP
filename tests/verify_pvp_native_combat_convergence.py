@@ -137,7 +137,7 @@ check('CurrentHP +=' not in factory + contain, 'no manual HP addition')
 
 # Version/revision surfaces.
 check('LunarisPlugin("forgetwhtuno.erenshor.pvp", "0.5.34"' in plugin, 'plugin version is 0.5.34')
-check('revision=pvp-0.5.34-preop-world-context-r1' in plugin, 'runtime revision marker is pre-opportunity world context r1')
+check('revision=pvp-0.5.34-preop-world-context-r2' in plugin, 'runtime revision marker is pre-opportunity world context r1')
 check('<Version>0.5.34</Version>' in csproj and '<AssemblyVersion>0.5.34.0</AssemblyVersion>' in csproj and '<FileVersion>0.5.34.0</FileVersion>' in csproj, 'csproj version metadata is 0.5.34')
 
 # World combat/Nemesis/UI regressions.

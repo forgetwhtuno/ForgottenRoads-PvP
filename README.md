@@ -4,7 +4,7 @@ Part of the **Forgotten Roads for Erenshor** mod collection.
 
 Standalone MMO-style PvP encounters for Erenshor. Practice Duels remains friendly, consensual, and non-lethal for Sims already in the zone. Erenshor PvP selects off-map Sim profiles and runs lethal encounters with normal player death and respawn. World PvP contains both consensual arranged matches and rare non-consensual wild ambushes.
 
-Current development line: 0.5.34 (`pvp-0.5.34-preop-world-context-r1`). A shared pre-opportunity gate rejects low-level, native-combat/recent-combat, unsafe-party, restricted-zone, and nearby-world-actor contexts before selection, invitation, ambush presentation, or proxy creation. `Character.Start` remains the final pre-GO native writer of temporary-proxy `xp` and `factionMods`; live gameplay confirmation remains required.
+Current development line: 0.5.34 (`pvp-0.5.34-preop-world-context-r2`). A shared pre-opportunity gate rejects low-level, native-combat/recent-combat, unsafe-party, restricted-zone, and nearby-world-actor contexts before selection, invitation, ambush presentation, or proxy creation. Wild and Nemesis ambushes also wait until the player and every party member are at half health or more; arranged challenges keep their Accept prompt instead. A blocked ambush stays due and is retried rather than spending its interval and chance roll. `Character.Start` remains the final pre-GO native writer of temporary-proxy `xp` and `factionMods`; live gameplay confirmation remains required.
 
 ### Temporary proxy startup boundary
 

@@ -311,7 +311,7 @@ Write-Host "PvP per-proxy ability-use observability guard: PASS (bounded, not pe
 $pluginSource = Get-Content (Join-Path $Root "src\ErenshorPvPPlugin.cs") -Raw
 if ($pluginSource -notmatch 'LunarisPlugin\("forgetwhtuno\.erenshor\.pvp", "0\.5\.34", "forgetwhtuno"') { throw "PvP version guard failed: plugin version is not 0.5.34." }
 Write-Host "PvP version guard: PASS (0.5.34)" -ForegroundColor Green
-if ($pluginSource -notmatch 'revision=pvp-0\.5\.34-preop-world-context-r1') { throw "PvP revision guard failed: pre-opportunity world-context marker missing." }
+if ($pluginSource -notmatch 'revision=pvp-0\.5\.34-preop-world-context-r2') { throw "PvP revision guard failed: pre-opportunity world-context marker missing." }
 $preopPolicySource = Get-Content (Join-Path $Root "src\PvpPreOpportunityPolicy.cs") -Raw
 if ($preopPolicySource -notmatch 'MinimumPlayerLevel = 3' -or $preopPolicySource -notmatch 'RecentNativeCombatGraceSeconds = 20f' -or $preopPolicySource -notmatch 'NearbyWorldActorRadius = 12f') {
   throw "PvP pre-opportunity policy guard failed: approved constants are missing."
@@ -329,6 +329,25 @@ if (!$tryOffer.Success -or $tryOffer.Value.IndexOf('EvaluatePreOpportunityContex
 }
 if ($controllerSource -notmatch 'CurrentAggroTarget' -or $controllerSource -notmatch 'FindObjectsOfType<NPC>' -or $controllerSource -notmatch 'PvpTemporaryCloneFactory\.IsTemporaryNpc') {
   throw "PvP pre-opportunity wiring guard failed: native combat/world actor scan is incomplete."
+}
+# r2: the recent-combat grace must be stamped every frame, not only by the 12-second scan, and
+# must not read GameData.InCombat (which also stays true while auto-attack is merely toggled on).
+$tick = [regex]::Match($controllerSource, 'internal\s+static\s+void\s+Tick\(\)[\s\S]*?\n        \}')
+$sample = [regex]::Match($controllerSource, 'private\s+static\s+void\s+SampleNativeCombat\([\s\S]*?\n        \}')
+if (!$tick.Success -or $tick.Value -notmatch 'SampleNativeCombat\(now\)' -or !$sample.Success -or
+    $sample.Value -notmatch 'UnderThreat' -or $sample.Value -notmatch 'RecentDmg' -or $sample.Value -notmatch 'CurrentAggroTarget' -or
+    $sample.Value -notmatch '_lastNativeCombatAt = now' -or $sample.Value -match 'GameData\.InCombat') {
+  throw "PvP pre-opportunity grace guard failed: native combat must be sampled every frame from threat signals."
+}
+# r2: a world-context block must not spend the due ambush opportunity or its chance roll.
+$ambushGate = $tick.Value.IndexOf('EvaluatePreOpportunityContext(PvpEncounterMode.Ambush, "wild")')
+if ($ambushGate -lt 0 -or $ambushGate -gt $tick.Value.IndexOf('ScheduleNextAmbush(now)') -or
+    $tick.Value.IndexOf('ScheduleNextAmbush(now)') -gt $tick.Value.IndexOf('UnityEngine.Random.Range(0, 100)')) {
+  throw "PvP ambush opportunity guard failed: the gate must run before the ambush interval is rescheduled and rolled."
+}
+if ($preopPolicySource -notmatch 'AmbushMinimumHealthFraction = 0\.5f' -or
+    $controllerSource -notmatch 'mode == PvpEncounterMode\.Ambush && AnyBelowHealthFraction\(principals, PvpPreOpportunityPolicy\.AmbushMinimumHealthFraction\)') {
+  throw "PvP ambush health guard failed: ambush-only health floor is missing."
 }
 Write-Host "PvP 0.5.34 pre-opportunity policy/wiring guards: PASS" -ForegroundColor Green
 $loopPolicySource = Get-Content (Join-Path $Root "src\PvpNativeCombatLoopPolicy.cs") -Raw

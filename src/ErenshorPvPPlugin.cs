@@ -60,7 +60,7 @@ namespace ErenshorPvP
             // assembly was 0.5.5, which made the startup line useless for confirming which DLL loaded -
             // exactly the check live acceptance depends on.
             Logging.LogInfo("Erenshor PvP " + ResolvePluginVersion() + " loaded. Disabled by default; use the retained PvP panel (or /epvp compatibility commands) to opt in.");
-            Logging.LogInfo("PvP runtime marker: plugin_identity=ErenshorPvP; revision=pvp-0.5.34-preop-world-context-r1");
+            Logging.LogInfo("PvP runtime marker: plugin_identity=ErenshorPvP; revision=pvp-0.5.34-preop-world-context-r2");
         }
 
         internal bool RuntimeHooksReady { get { return _runtimeHooksReady; } }

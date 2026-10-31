@@ -145,6 +145,7 @@ namespace ErenshorPvP
                 if (PvpTemporaryCloneFactory.HasActiveTeam) PvpTemporaryCloneFactory.Despawn("pvp_disabled");
                 return;
             }
+            SampleNativeCombat(now);
             if (PvpTemporaryCloneFactory.HasActiveTeam && now >= _nextAuthorityCheck)
             {
                 _nextAuthorityCheck = now + 1f;
@@ -171,7 +172,10 @@ namespace ErenshorPvP
             _nextScan = now + 12f;
             string scene = SceneManager.GetActiveScene().name;
             PvpEncounterMode mode = PvpEncounterMode.Arranged;
-            if (AmbushAllowed(scene) && now >= _nextAmbush)
+            // A transient world-context block (combat, nearby actors, party state) is not an
+            // eligible opportunity, so it must not spend the interval/chance roll; the due
+            // ambush is retried on the next scan.
+            if (AmbushAllowed(scene) && now >= _nextAmbush && EvaluatePreOpportunityContext(PvpEncounterMode.Ambush, "wild"))
             {
                 ScheduleNextAmbush(now);
                 if (UnityEngine.Random.Range(0, 100) < Math.Max(5, Math.Min(100, _ambushChancePercent.Value))) mode = PvpEncounterMode.Ambush;
@@ -196,7 +200,11 @@ namespace ErenshorPvP
             if (mode == PvpEncounterMode.Arranged && !ArrangedEnabled)
             { Diagnostic("scan arranged_disabled"); if (forced) Say("[Erenshor PvP] Arranged challenges are switched off."); return; }
             if (IsZoning()) { Diagnostic("scan zoning scene=" + scene); return; }
-            if (!EvaluatePreOpportunityContext(mode, mode == PvpEncounterMode.Ambush ? "wild" : "arranged")) return;
+            if (!EvaluatePreOpportunityContext(mode, mode == PvpEncounterMode.Ambush ? "wild" : "arranged"))
+            {
+                if (forced) Say("[Erenshor PvP] Not right now: world context is not safe (" + PvpPreOpportunityPolicy.Token(_lastPreOpportunityDecision) + ").");
+                return;
+            }
 
             PvpTeamPlan team;
             PvpEligibilityDecision decision;
@@ -1012,16 +1020,58 @@ namespace ErenshorPvP
             bool recentCombat = !nativeCombat && _lastNativeCombatAt >= 0f &&
                 now - _lastNativeCombatAt < PvpPreOpportunityPolicy.RecentNativeCombatGraceSeconds;
             bool restricted = IsProtectedScene(CurrentScene) || (mode == PvpEncounterMode.Ambush && !AmbushAllowed(CurrentScene));
+            bool healthLow = mode == PvpEncounterMode.Ambush && AnyBelowHealthFraction(principals, PvpPreOpportunityPolicy.AmbushMinimumHealthFraction);
             PvpPreOpportunityDecision decision = PvpPreOpportunityPolicy.Evaluate(new PvpPreOpportunityInput
             {
                 CharacterReady = characterReady, Zoning = IsZoning(), PvpEnabled = Enabled, PartyValid = partyValid,
                 NativeCombatActive = nativeCombat, RecentNativeCombat = recentCombat,
-                NearbyWorldActor = nearbyCount > 0, RestrictedZone = restricted, PlayerLevel = playerLevel
+                NearbyWorldActor = nearbyCount > 0, RestrictedZone = restricted, HealthLow = healthLow, PlayerLevel = playerLevel
             });
             LogPreOpportunityDecision(source, decision, playerLevel, principals.Count, nearbyCount, nearestDistance,
                 _lastNativeCombatAt < 0f ? -1f : Math.Max(0f, now - _lastNativeCombatAt));
             _lastPreOpportunityDecision = decision;
             return decision == PvpPreOpportunityDecision.Allowed;
+        }
+
+        // The opportunity scan runs every 12 seconds, so a pull that starts and ends between two
+        // scans would never be seen by it. Sample the native threat signals every frame instead:
+        // Character.UnderThreat and Stats.RecentDmg are refreshed by native combat and decay in
+        // seconds, and group-mate aggro mirrors PlayerCombat.CheckForTrueCombat. GameData.InCombat
+        // is not used directly because it also stays true while auto-attack is merely toggled on.
+        private static void SampleNativeCombat(float now)
+        {
+            try
+            {
+                Character player = GameData.PlayerControl == null ? null : GameData.PlayerControl.Myself;
+                if (player == null || !player.Alive) return;
+                bool combat = player.UnderThreat > 0f || (player.MyStats != null && player.MyStats.RecentDmg > 0f);
+                if (!combat && GameData.GroupMembers != null)
+                {
+                    foreach (SimPlayerTracking tracking in GameData.GroupMembers)
+                    {
+                        Character member = tracking == null || tracking.MyAvatar == null || tracking.MyAvatar.MyStats == null ? null : tracking.MyAvatar.MyStats.Myself;
+                        if (member == null || !member.Alive || member.MyNPC == null || member.MyNPC.CurrentAggroTarget == null) continue;
+                        combat = true;
+                        break;
+                    }
+                }
+                if (combat) _lastNativeCombatAt = now;
+            }
+            catch { }
+        }
+
+        private static bool AnyBelowHealthFraction(HashSet<Character> principals, float fraction)
+        {
+            foreach (Character actor in principals)
+            {
+                try
+                {
+                    if (actor == null || actor.MyStats == null || actor.MyStats.CurrentMaxHP <= 0) continue;
+                    if (actor.MyStats.CurrentHP < actor.MyStats.CurrentMaxHP * fraction) return true;
+                }
+                catch { }
+            }
+            return false;
         }
 
         private static bool IsPrincipalOrOwned(Character actor, HashSet<Character> principals)

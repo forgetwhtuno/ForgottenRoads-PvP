@@ -6,6 +6,16 @@
 - DESIGN-SELECTED level floor: player level 3. Party-average matchmaking remains unchanged.
 - Suppresses opportunities during native combat, a 20-second post-combat grace period, unsafe party state, restricted/zoning state, or within 12m of an external NPC-backed world actor; resource nodes and party-owned actors are excluded.
 - Preserves existing final spawn clearance and all post-GO world-combat containment behavior.
+- r2 (`pvp-0.5.34-preop-world-context-r2`): the 20-second grace is now measured from the last frame
+  of native combat. Previously it was stamped only when the 12-second opportunity scan happened to
+  observe combat, so a short pull between two scans left no grace at all. The per-frame sample reads
+  `Character.UnderThreat`, `Stats.RecentDmg`, and group-mate aggro targets; it deliberately does not
+  read `GameData.InCombat`, which also stays true while auto-attack is merely toggled on.
+- r2: a due wild ambush is no longer spent when the gate blocks it. The interval was rescheduled and
+  the chance rolled before the gate ran, so ambushes while grinding were far rarer than configured.
+  The opportunity now stays due and is retried on the next scan.
+- r2 (DESIGN-SELECTED): wild and Nemesis ambushes wait until the player and every party member are
+  at 50% health or more (`low_health`). Arranged challenges are not held, since they already ask.
 
 ## 0.5.33 - equipment presentation fidelity
 

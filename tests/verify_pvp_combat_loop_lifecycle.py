@@ -287,7 +287,7 @@ def verify_source_ownership() -> int:
     check('PvpTemporaryCloneFactory.AreAllProxiesReadyForGo(out readiness)' in controller, 'controller GO path uses read-only readiness')
     check('npc.NeverAggro = false' not in factory, 'factory does not release NeverAggro early')
     check('AccessTools.Method(typeof(NPC), "Start"' not in factory and '.Start()' not in re.sub(r'//.*', '', factory), 'NPC.Start is never invoked manually')
-    check('revision=pvp-0.5.34-preop-world-context-r1' in plugin, 'exact 0.5.34 revision marker present')
+    check('revision=pvp-0.5.34-preop-world-context-r2' in plugin, 'exact 0.5.34 revision marker present')
     check('PvpNativeCombatLoopPolicy.RunSelfTests()' in controller, 'runtime selftest includes loop policy')
     return len(checks)
 
