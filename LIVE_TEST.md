@@ -1,4 +1,12 @@
-# PvP 0.5.33 live acceptance — equipment presentation fidelity
+# PvP 0.5.34 Beta live acceptance
+
+Before evaluating the equipment visuals below, run the current pre-opportunity and combat gate:
+
+1. Verify offers/ambushes do not start in restricted, native-combat/recent-combat, unsafe-party, low-level, or nearby-world-actor contexts.
+2. Run an arranged 5v5 on the installed candidate. Confirm one canonical PvP plugin identity, the 3/2/1/GO countdown, no pre-GO damage, attackers moving and engaging, damage in both directions, native attacks/spells, and legitimate-outcome-only rewards.
+3. Confirm one failed proxy does not destroy an otherwise viable match. Run a second 5v5 without restarting, then restart the game and run a smoke match.
+
+Equipment presentation fidelity in a valid match:
 
 1. Start a normal arranged or wild PvP match.
 2. Confirm reward suppression remains valid through countdown and GO, then confirm combat/damage and
